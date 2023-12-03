@@ -7,10 +7,13 @@ use regex::Regex;
 use anyhow::Context as _;
 use serenity::async_trait;
 use serenity::model::channel::Message;
+use serenity::model::gateway::Activity;
 use serenity::model::gateway::Ready;
+use serenity::model::user::OnlineStatus;
 use serenity::model::user::User;
 use serenity::prelude::*;
 use serenity::utils::MessageBuilder;
+
 use shuttle_secrets::SecretStore;
 use tracing::{error, info};
 
@@ -121,8 +124,13 @@ impl EventHandler for Bot {
         }
     }
 
-    async fn ready(&self, _: Context, ready: Ready) {
+    async fn ready(&self, ctx: Context, ready: Ready) {
         info!("{} is connected!", ready.user.name);
+
+        let activity = Activity::playing("Good Night");
+        let status = OnlineStatus::Idle;
+
+        ctx.set_presence(Some(activity), status).await;
     }
 
     #[cfg(feature = "cache")]
