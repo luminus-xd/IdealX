@@ -78,6 +78,7 @@ impl EventHandler for Bot {
                 };
             let response = MessageBuilder::new()
                 .mention(&msg.author)
+                .push("\n")
                 .push(&gpt_message)
                 .build();
             if let Err(why) = msg.channel_id.say(&ctx.http, &response).await {
