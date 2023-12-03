@@ -52,7 +52,7 @@ impl EventHandler for Bot {
     async fn message(&self, ctx: Context, msg: Message) {
         if is_inclued_bot_mention(&ctx, &msg) && is_user(&msg.author) {
             let channel_id = msg.channel_id;
-            let messages = match channel_id.messages(&ctx.http, |m| m.limit(100)).await {
+            let messages = match channel_id.messages(&ctx.http, |m| m.limit(5)).await {
                 Ok(messages) => messages,
                 Err(e) => {
                     println!("Error fetching messages: {}", e);
