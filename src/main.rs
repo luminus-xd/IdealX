@@ -158,7 +158,7 @@ async fn serenity(
 
     let client = get_client(&discord_token, &gpt_token).await;
 
-    register_commands(&discord_token).await;
+    // register_commands(&discord_token).await;
 
     Ok(client.into())
 }
