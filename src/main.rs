@@ -197,5 +197,5 @@ async fn register_commands(discord_token: &str) {
         });
 
     // フレームワークを実行する
-    framework.run().await.unwrap();
+    framework.run().await.expect("Err registering commands");
 }
