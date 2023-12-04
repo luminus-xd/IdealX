@@ -1,8 +1,14 @@
 mod chatgpt;
 
+mod commands {
+    pub mod age;
+}
+
 use chatgpt::get_gpt_response;
 use chatgpt::RequestMessage;
 use regex::Regex;
+
+use poise::serenity_prelude as serenity;
 
 use anyhow::Context as _;
 use serenity::async_trait;
@@ -152,6 +158,8 @@ async fn serenity(
 
     let client = get_client(&discord_token, &gpt_token).await;
 
+    register_commands(&discord_token).await;
+
     Ok(client.into())
 }
 
@@ -167,4 +175,27 @@ pub async fn get_client(discord_token: &str, gpt_token: &str) -> serenity::Clien
         })
         .await
         .expect("Err creating client")
+}
+
+// コマンドを登録する非同期関数
+async fn register_commands(discord_token: &str) {
+    // フレームワークを構築する
+    let framework = poise::Framework::builder()
+        .options(poise::FrameworkOptions {
+            // ageコマンドを登録する
+            commands: vec![commands::age::age()],
+            ..Default::default()
+        })
+        .token(discord_token)
+        .intents(serenity::GatewayIntents::non_privileged())
+        .setup(|ctx, _ready, framework| {
+            Box::pin(async move {
+                // グローバルにコマンドを登録する
+                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+                Ok(commands::age::Data {})
+            })
+        });
+
+    // フレームワークを実行する
+    framework.run().await.unwrap();
 }
