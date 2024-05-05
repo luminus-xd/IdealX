@@ -864,7 +864,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ideal-x"
+name = "ideal-x-2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
