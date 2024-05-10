@@ -30,13 +30,14 @@ pub struct RequestMessage<'a> {
     pub content: String,
 }
 
+/// GPTにリクエストを送信、レスポンスを取得
 pub async fn get_gpt_response(
-    messages: Vec<RequestMessage<'_>>,
-    gpt_token: &str,
-    client: &reqwest::Client,
+    messages: Vec<RequestMessage<'_>>, // リクエストに含めるメッセージのベクター
+    gpt_token: &str,                   // ChatGPT APIのアクセストークン
+    client: &reqwest::Client,          // reqwestのクライアントインスタンス
 ) -> Result<String, Error> {
     const URL: &str = "https://api.openai.com/v1/chat/completions";
-    const GPT_MODEL: &str = "gpt-4-turbo-2024-04-09";
+    const GPT_MODEL: &str = "gpt-4-turbo-2024-04-09"; // GPTのモデル名
 
     let request_body = ChatRequest {
         model: GPT_MODEL,
@@ -47,10 +48,10 @@ pub async fn get_gpt_response(
         .post(URL)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", gpt_token))
-        .json(&request_body)
+        .json(&request_body) // リクエストボディをJSONに変換
         .send()
         .await?
-        .json::<ChatResponse>()
+        .json::<ChatResponse>() // レスポンスをChatResponse構造体にデシリアライズ
         .await?;
 
     log::info!("Response content: {}", response.choices[0].message.content);

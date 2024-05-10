@@ -28,17 +28,20 @@ struct Bot {
     client: reqwest::Client,
 }
 
+/// ユーザーかどうかを判定する関数
 fn is_user(author: &User) -> bool {
     return !author.bot;
 }
 
+/// メッセージにBotへのメンションが含まれているかを判定する関数
 fn is_inclued_bot_mention(ctx: &Context, message: &Message) -> bool {
     return message
         .mentions
         .iter()
-        .any(|user| user.id == ctx.cache.current_user().id);
+        .any(|user| user.id == ctx.cache.current_user().id); // メンションされたユーザーIDがBotのIDと一致するかを判定
 }
 
+/// メッセージをAPIリクエスト形式に変換する関数
 fn build_json(messages: Vec<Message>) -> Vec<RequestMessage<'static>> {
     let mention_regexp = Regex::new(r"<@(\d+)>").unwrap();
     return messages
@@ -71,6 +74,7 @@ impl EventHandler for Bot {
             };
 
             let requset_body: Vec<RequestMessage> = build_json(messages);
+            // タイピング中の表示を開始
             let _typing = msg.channel_id.start_typing(&ctx.http);
             let gpt_message =
                 match get_gpt_response(requset_body, &self.gpt_token, &self.client).await {
@@ -103,12 +107,16 @@ impl EventHandler for Bot {
         }
     }
 
+    /// Botが起動したときのイベントハンドラ
     async fn ready(&self, ctx: Context, ready: Ready) {
         info!("{} is connected!", ready.user.name);
 
+        // Botのアクティビティを設定
         let activity = ActivityData::playing("Good Night");
+        // Botのオンラインステータスを設定
         let status = OnlineStatus::Idle;
 
+        // Botのプレゼンスを設定
         ctx.set_presence(Some(activity), status);
     }
 
@@ -131,11 +139,13 @@ async fn serenity(
 
     let client = get_client(&discord_token, &gpt_token).await;
 
+    // [WIP] コマンド登録のタイミングをどこかで設定する
     // register_commands(&discord_token).await;
 
     Ok(client.into())
 }
 
+/// トークン情報などを設定し、クライアントを取得
 pub async fn get_client(discord_token: &str, gpt_token: &str) -> serenity::Client {
     let intents = GatewayIntents::GUILD_MESSAGES
         | GatewayIntents::DIRECT_MESSAGES
@@ -150,7 +160,7 @@ pub async fn get_client(discord_token: &str, gpt_token: &str) -> serenity::Clien
         .expect("Err creating client")
 }
 
-// コマンドを登録する非同期関数
+/// コマンドを登録する非同期関数
 async fn register_commands(discord_token: &str) {
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
