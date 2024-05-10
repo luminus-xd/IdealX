@@ -8,19 +8,19 @@ use chatgpt::get_gpt_response;
 use chatgpt::RequestMessage;
 use regex::Regex;
 
-use poise::serenity_prelude as serenity;
+use poise::{serenity_prelude as serenity, serenity_prelude::ActivityData};
 
 use anyhow::Context as _;
 use serenity::async_trait;
 use serenity::model::channel::Message;
-use serenity::model::gateway::Activity;
 use serenity::model::gateway::Ready;
 use serenity::model::user::OnlineStatus;
 use serenity::model::user::User;
 use serenity::prelude::*;
 use serenity::utils::MessageBuilder;
 
-use shuttle_secrets::SecretStore;
+use shuttle_runtime::SecretStore;
+
 use tracing::{error, info};
 
 struct Bot {
@@ -36,7 +36,7 @@ fn is_inclued_bot_mention(ctx: &Context, message: &Message) -> bool {
     return message
         .mentions
         .iter()
-        .any(|user| user.id == ctx.cache.current_user_id());
+        .any(|user| user.id == ctx.cache.current_user().id);
 }
 
 fn build_json(messages: Vec<Message>) -> Vec<RequestMessage<'static>> {
@@ -61,7 +61,8 @@ impl EventHandler for Bot {
     async fn message(&self, ctx: Context, msg: Message) {
         if is_inclued_bot_mention(&ctx, &msg) && is_user(&msg.author) {
             let channel_id = msg.channel_id;
-            let messages = match channel_id.messages(&ctx.http, |m| m.limit(5)).await {
+            let builder = serenity::builder::GetMessages::new().limit(5);
+            let messages = match channel_id.messages(&ctx.http, builder).await {
                 Ok(messages) => messages,
                 Err(e) => {
                     println!("Error fetching messages: {}", e);
@@ -70,13 +71,7 @@ impl EventHandler for Bot {
             };
 
             let requset_body: Vec<RequestMessage> = build_json(messages);
-            let _typing = match msg.channel_id.start_typing(&ctx.http) {
-                Ok(typing) => typing,
-                Err(e) => {
-                    println!("Error: {}", e);
-                    return;
-                }
-            };
+            let _typing = msg.channel_id.start_typing(&ctx.http);
             let gpt_message =
                 match get_gpt_response(requset_body, &self.gpt_token, &self.client).await {
                     Ok(text) => text,
@@ -111,10 +106,10 @@ impl EventHandler for Bot {
     async fn ready(&self, ctx: Context, ready: Ready) {
         info!("{} is connected!", ready.user.name);
 
-        let activity = Activity::playing("Good Night");
+        let activity = ActivityData::playing("Good Night");
         let status = OnlineStatus::Idle;
 
-        ctx.set_presence(Some(activity), status).await;
+        ctx.set_presence(Some(activity), status);
     }
 
     #[cfg(feature = "cache")]
@@ -125,7 +120,7 @@ impl EventHandler for Bot {
 
 #[shuttle_runtime::main]
 async fn serenity(
-    #[shuttle_secrets::Secrets] secret_store: SecretStore,
+    #[shuttle_runtime::Secrets] secret_store: SecretStore,
 ) -> shuttle_serenity::ShuttleSerenity {
     let discord_token = secret_store
         .get("DISCORD_TOKEN")
@@ -157,23 +152,20 @@ pub async fn get_client(discord_token: &str, gpt_token: &str) -> serenity::Clien
 
 // コマンドを登録する非同期関数
 async fn register_commands(discord_token: &str) {
-    // フレームワークを構築する
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            // ageコマンドを登録する
             commands: vec![commands::age::age()],
             ..Default::default()
         })
-        .token(discord_token)
-        .intents(serenity::GatewayIntents::non_privileged())
-        .setup(|ctx, _ready, framework| {
-            Box::pin(async move {
-                // グローバルにコマンドを登録する
-                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
-                Ok(commands::age::Data {})
-            })
-        });
+        .build();
 
-    // フレームワークを実行する
-    framework.run().await.expect("Err registering commands");
+    let mut client =
+        serenity::Client::builder(discord_token, serenity::GatewayIntents::non_privileged())
+            .framework(framework)
+            .await
+            .expect("Err creating client");
+
+    if let Err(why) = client.start().await {
+        println!("Client error: {:?}", why);
+    }
 }
