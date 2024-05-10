@@ -1,19 +1,92 @@
 # Rust Discord Bot with Shuttle
 
-WIP...
+This repository is a Discord bot built using Rust's Serenity. Hosting is provided by Shuttle. 
 
-## Serenity
+Since it is still under development, it has quite a few features, but the following functions are available
+- When you make a mentions to the Bot, it gets the 5 latest messages and GPT will answer them.
+- When a URL of x.com or twitter.com is pasted, it is converted to vxtwitter.com and posted
 
-In this example we will deploy a Serenity bot with Shuttle that responds to the `!hello` command with `world!`. To run this bot we need a valid Discord Token. To get started log in to the [Discord developer portal](https://discord.com/developers/applications).
+## Install & Build
 
-1. Click the New Application button, name your application and click Create.
-2. Navigate to the Bot tab in the lefthand menu, and add a new bot.
-3. On the bot page click the Reset Token button to reveal your token. Put this token in your `Secrets.toml
+Install various required packages using Cargo. Build is also performed at the same time.
 
-To add the bot to a server we need to create an invite link.
+```bash
+cargo build
+```
 
-1. On your bot's application page, open the OAuth2 page via the lefthand panel.
-2. Go to the URL Generator via the lefthand panel, and select the `bot` scope as well as the `Send Messages` permission in the Bot Permissions section.
-3. Copy the URL, open it in your browser and select a Discord server you wish to invite the bot to.
+## Deploy
 
-For more information please refer to the [Discord docs](https://discord.com/developers/docs/getting-started) as well as the [Serenity repo](https://github.com/serenity-rs/serenity) for more examples.
+### Get a Discord token
+
+To run this bot, you need a valid Discord token; login to the [Discord Developer Portal](https://discord.com/developers/applications).
+
+The required authority is **"MESSAGE CONTENT INTENT"**
+
+> [!NOTE]
+> The official Shuttle website describes [how to install the Hello world bot](https://docs.shuttle.rs/examples/serenity), but it also describes the operation of the Discord Developers Portal, so please refer to that if you are not sure.
+
+
+### Get a OpenAI token
+
+To run this bot, you need a valid OpenAI token; login to the [OpenAI Profile | User APPI keys](https://platform.openai.com/settings/profile?tab=api-keys).
+
+> [!WARNING]
+> You must have charged credits to use OpenAI's ChatGPT API.
+
+### Install Shuttle CLI
+
+Please install it beforehand, as it will be installed using cargo-binstall.  
+Install the cargo-shuttle binary.
+
+```bash
+cargo binstall cargo-shuttle
+```
+
+Log in to Shuttle.  
+You will be asked to enter your API key, which can be obtained from the following location after logging into your browser dashboard: https://console.shuttle.rs/account/overview
+
+```bash
+cargo shuttle login
+```
+
+### Write various tokens in Secrets.toml
+
+```toml
+DISCORD_TOKEN="{{ token }}"
+CHATGPT_TOKEN="{{ token }}"
+```
+
+> [!TIP]
+> Shuttle refers to the value in Secrets.toml, not the env file.
+
+### Deploy to Shuttle
+
+#### Init
+
+Initial project setup for Shuttle. Here you can specify the project name, etc.
+
+```bash
+cargo shuttle init
+```
+
+#### Project Start
+
+```bash
+shuttle project new --idle-minutes 0
+```
+
+> [!TIP]
+> Since the application sleeps after 30 minutes of inactivity, the `--idle-minutes` option can be used to set the application not to sleep when the project is created.
+
+#### Deploy
+
+Use the `--allow-dirty` option to upload Secrets.toml to Shuttle, which will not be pushed to Git the first time.  
+https://docs.shuttle.rs/getting-started/shuttle-commands
+
+```bash
+cargo shuttle deploy --allow-dirty
+```
+
+### 🎉 Completed
+
+Check the online status of the bot you let join the Discord, and try mentions to see how it works!
