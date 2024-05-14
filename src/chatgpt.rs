@@ -37,7 +37,7 @@ pub async fn get_gpt_response(
     client: &reqwest::Client,          // reqwestのクライアントインスタンス
 ) -> Result<String, Error> {
     const URL: &str = "https://api.openai.com/v1/chat/completions";
-    const GPT_MODEL: &str = "gpt-4-turbo-2024-04-09"; // GPTのモデル名
+    const GPT_MODEL: &str = "gpt-4o-2024-05-13"; // GPTのモデル名
 
     let request_body = ChatRequest {
         model: GPT_MODEL,
