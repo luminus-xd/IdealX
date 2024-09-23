@@ -39,7 +39,7 @@ Please install it beforehand, as it will be installed using cargo-binstall.
 Install the cargo-shuttle binary.
 
 ```bash
-cargo binstall cargo-shuttle
+cargo install cargo-shuttle
 ```
 
 Log in to Shuttle.  
