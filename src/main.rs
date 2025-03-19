@@ -1,11 +1,12 @@
-mod chatgpt;
+mod claude;
 
 mod commands {
     pub mod age;
 }
 
-use chatgpt::get_gpt_response;
-use chatgpt::RequestMessage;
+use claude::get_claude_response;
+use claude::split_message;
+use claude::RequestMessage;
 use regex::Regex;
 
 use poise::{serenity_prelude as serenity, serenity_prelude::ActivityData};
@@ -25,7 +26,7 @@ use shuttle_runtime::SecretStore;
 use tracing::{error, info};
 
 struct Bot {
-    gpt_token: String,
+    claude_token: String,
     client: reqwest::Client,
 }
 
@@ -77,21 +78,37 @@ impl EventHandler for Bot {
             let requset_body: Vec<RequestMessage> = build_json(messages);
             // タイピング中の表示を開始
             let _typing = msg.channel_id.start_typing(&ctx.http);
-            let gpt_message =
-                match get_gpt_response(requset_body, &self.gpt_token, &self.client).await {
+            let claude_message =
+                match get_claude_response(requset_body, &self.claude_token, &self.client).await {
                     Ok(text) => text,
                     Err(e) => {
-                        println!("Error GPT response: {}", e);
+                        println!("Error Claude response: {}", e);
                         return;
                     }
                 };
-            let response = MessageBuilder::new()
+            
+            // メッセージを2000文字ごとに分割
+            const DISCORD_MAX_LENGTH: usize = 2000;
+            let split_messages = split_message(&claude_message, DISCORD_MAX_LENGTH - 50); // メンションなどの余裕を持たせる
+            
+            // 最初のメッセージにはメンションを含める
+            let first_response = MessageBuilder::new()
                 .mention(&msg.author)
                 .push("\n")
-                .push(&gpt_message)
+                .push(&split_messages[0])
                 .build();
-            if let Err(why) = msg.channel_id.say(&ctx.http, &response).await {
-                println!("Error sending message: {:?}", why);
+                
+            if let Err(why) = msg.channel_id.say(&ctx.http, &first_response).await {
+                println!("Error sending first message: {:?}", why);
+                return;
+            }
+            
+            // 残りのメッセージを送信
+            for chunk in split_messages.iter().skip(1) {
+                if let Err(why) = msg.channel_id.say(&ctx.http, chunk).await {
+                    println!("Error sending message chunk: {:?}", why);
+                    break;
+                }
             }
         }
 
@@ -134,11 +151,11 @@ async fn serenity(
     let discord_token = secret_store
         .get("DISCORD_TOKEN")
         .context("'DISCORD_TOKEN' was not found")?;
-    let gpt_token = secret_store
-        .get("CHATGPT_TOKEN")
-        .context("'CHATGPT_TOKEN' was not found")?;
+    let claude_token = secret_store
+        .get("CLAUDE_TOKEN")
+        .context("'CLAUDE_TOKEN' was not found")?;
 
-    let client = get_client(&discord_token, &gpt_token).await;
+    let client = get_client(&discord_token, &claude_token).await;
 
     // [WIP] コマンド登録のタイミングをどこかで設定する
     // register_commands(&discord_token).await;
@@ -147,14 +164,14 @@ async fn serenity(
 }
 
 /// トークン情報などを設定し、クライアントを取得
-pub async fn get_client(discord_token: &str, gpt_token: &str) -> serenity::Client {
+pub async fn get_client(discord_token: &str, claude_token: &str) -> serenity::Client {
     let intents = GatewayIntents::GUILD_MESSAGES
         | GatewayIntents::DIRECT_MESSAGES
         | GatewayIntents::MESSAGE_CONTENT;
 
     serenity::Client::builder(discord_token, intents)
         .event_handler(Bot {
-            gpt_token: gpt_token.to_owned(),
+            claude_token: claude_token.to_owned(),
             client: reqwest::Client::new(),
         })
         .await
