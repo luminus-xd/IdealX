@@ -3,7 +3,8 @@
 This repository is a Discord bot built using Rust's Serenity. Hosting is provided by Shuttle.
 
 Since it is still under development, it has quite a few features, but the following functions are available:
-- When you make a mentions to the Bot, it gets the 5 latest messages and GPT will answer them.
+- When you make a mentions to the Bot, it gets the 5 latest messages and Claude 3.5 Sonnet will answer them.
+- Messages longer than 2000 characters are automatically split into multiple messages to comply with Discord's message length limit.
 - When a URL of x.com or twitter.com is pasted, it is converted to vxtwitter.com and posted
 
 ## Requirements
@@ -35,12 +36,12 @@ The required authority is **"MESSAGE CONTENT INTENT"**
 > The official Shuttle website describes [how to install the Hello world bot](https://docs.shuttle.rs/examples/serenity), but it also describes the operation of the Discord Developers Portal, so please refer to that if you are not sure.
 
 
-### Get a OpenAI token
+### Get an Anthropic Claude token
 
-To run this bot, you need a valid OpenAI token; login to the [OpenAI Profile | User APPI keys](https://platform.openai.com/settings/profile?tab=api-keys).
+To run this bot, you need a valid Anthropic Claude API token; login to the [Anthropic Console](https://console.anthropic.com/) and create an API key.
 
 > [!WARNING]
-> You must have charged credits to use OpenAI's ChatGPT API.
+> You must have a valid Anthropic account to use Claude API.
 
 ### Install Shuttle CLI
 
@@ -62,7 +63,7 @@ cargo shuttle login
 
 ```toml
 DISCORD_TOKEN="{{ token }}"
-CHATGPT_TOKEN="{{ token }}"
+CLAUDE_TOKEN="{{ token }}"
 ```
 
 > [!TIP]
