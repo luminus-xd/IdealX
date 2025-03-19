@@ -1,7 +1,9 @@
 use chrono::{Datelike, Utc};
 use poise::serenity_prelude as serenity;
 
-pub struct Data {}
+// メインのData型を使用するため、ここでの定義は削除
+// 代わりにcrate::Dataを使用する
+use crate::Data;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
