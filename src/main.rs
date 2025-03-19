@@ -25,6 +25,13 @@ use shuttle_runtime::SecretStore;
 
 use tracing::{error, info};
 
+// Poiseフレームワークのデータ型
+#[derive(Clone)]
+pub struct Data {
+    pub claude_token: String,
+    pub client: reqwest::Client,
+}
+
 struct Bot {
     claude_token: String,
     client: reqwest::Client,
@@ -155,45 +162,44 @@ async fn serenity(
         .get("CLAUDE_TOKEN")
         .context("'CLAUDE_TOKEN' was not found")?;
 
-    let client = get_client(&discord_token, &claude_token).await;
-
-    // [WIP] コマンド登録のタイミングをどこかで設定する
-    // register_commands(&discord_token).await;
-
-    Ok(shuttle_serenity::SerenityService(client))
-}
-
-/// トークン情報などを設定し、クライアントを取得
-pub async fn get_client(discord_token: &str, claude_token: &str) -> serenity::Client {
-    let intents = GatewayIntents::GUILD_MESSAGES
-        | GatewayIntents::DIRECT_MESSAGES
-        | GatewayIntents::MESSAGE_CONTENT;
-
-    serenity::Client::builder(discord_token, intents)
-        .event_handler(Bot {
-            claude_token: claude_token.to_owned(),
-            client: reqwest::Client::new(),
-        })
-        .await
-        .expect("Err creating client")
-}
-
-/// コマンドを登録する非同期関数
-async fn register_commands(discord_token: &str) {
+    // クローンを作成して所有権の問題を回避
+    let claude_token_for_framework = claude_token.clone();
+    
+    // Poiseフレームワークの設定
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![commands::age::age()],
             ..Default::default()
         })
+        .setup(move |ctx, _ready, framework| {
+            // moveキーワードを追加して変数の所有権をクロージャに移動
+            // claude_token_for_frameworkの所有権がクロージャに移動するので、
+            // 内部でのクローンは不要になります
+            
+            Box::pin(async move {
+                // グローバルにコマンドを登録
+                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+                Ok(Data {
+                    claude_token: claude_token_for_framework,
+                    client: reqwest::Client::new(),
+                })
+            })
+        })
         .build();
 
-    let mut client =
-        serenity::Client::builder(discord_token, serenity::GatewayIntents::non_privileged())
-            .framework(framework)
-            .await
-            .expect("Err creating client");
+    // Serenityクライアントの設定
+    let intents = GatewayIntents::GUILD_MESSAGES
+        | GatewayIntents::DIRECT_MESSAGES
+        | GatewayIntents::MESSAGE_CONTENT;
 
-    if let Err(why) = client.start().await {
-        println!("Client error: {:?}", why);
-    }
+    let client = serenity::Client::builder(discord_token, intents)
+        .event_handler(Bot {
+            claude_token: claude_token,
+            client: reqwest::Client::new(),
+        })
+        .framework(framework)
+        .await
+        .expect("Err creating client");
+
+    Ok(shuttle_serenity::SerenityService(client))
 }
