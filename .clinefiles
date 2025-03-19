@@ -1,0 +1,28 @@
+{
+    "allowedFiles": [
+        {
+            "pattern": ".*\\.rs$",
+            "description": "Rust source files"
+        },
+        {
+            "pattern": ".*\\.toml$",
+            "description": "TOML configuration files"
+        },
+        {
+            "pattern": ".*\\.md$",
+            "description": "Markdown documentation files"
+        },
+        {
+            "pattern": "\\.gitignore$",
+            "description": "Git ignore file"
+        },
+        {
+            "pattern": "\\.clinefiles$",
+            "description": "Cline files configuration"
+        },
+        {
+            "pattern": "\\.roomodes$",
+            "description": "Roo modes configuration"
+        }
+    ]
+}

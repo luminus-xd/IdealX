@@ -14,6 +14,7 @@ use anyhow::Context as _;
 use serenity::async_trait;
 use serenity::model::channel::Message;
 use serenity::model::gateway::Ready;
+use serenity::model::id::GuildId;
 use serenity::model::user::OnlineStatus;
 use serenity::model::user::User;
 use serenity::prelude::*;
@@ -120,7 +121,7 @@ impl EventHandler for Bot {
         ctx.set_presence(Some(activity), status);
     }
 
-    #[cfg(feature = "cache")]
+    // Serenity 0.12では cache featureが標準で含まれるようになったため、cfg属性は不要
     async fn cache_ready(&self, _ctx: Context, _guilds: Vec<GuildId>) {
         println!("cache ready");
     }
@@ -142,7 +143,7 @@ async fn serenity(
     // [WIP] コマンド登録のタイミングをどこかで設定する
     // register_commands(&discord_token).await;
 
-    Ok(client.into())
+    Ok(shuttle_serenity::SerenityService(client))
 }
 
 /// トークン情報などを設定し、クライアントを取得

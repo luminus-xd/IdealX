@@ -1,10 +1,19 @@
 # Rust Discord Bot with Shuttle
 
-This repository is a Discord bot built using Rust's Serenity. Hosting is provided by Shuttle. 
+This repository is a Discord bot built using Rust's Serenity. Hosting is provided by Shuttle.
 
-Since it is still under development, it has quite a few features, but the following functions are available
+Since it is still under development, it has quite a few features, but the following functions are available:
 - When you make a mentions to the Bot, it gets the 5 latest messages and GPT will answer them.
 - When a URL of x.com or twitter.com is pasted, it is converted to vxtwitter.com and posted
+
+## Requirements
+
+- Rust (stable channel)
+- Cargo
+- cargo-shuttle
+
+> [!IMPORTANT]
+> This project uses Rust edition 2021. The Cargo.toml file originally specified edition 2024, but this has been changed to 2021 for compatibility with the current stable version of Cargo.
 
 ## Install & Build
 
@@ -80,13 +89,24 @@ shuttle project new --idle-minutes 0
 
 #### Deploy
 
-Use the `--allow-dirty` option to upload Secrets.toml to Shuttle, which will not be pushed to Git the first time.  
+Use the `--allow-dirty` option to upload Secrets.toml to Shuttle, which will not be pushed to Git the first time.
 https://docs.shuttle.rs/getting-started/shuttle-commands
 
 ```bash
 cargo shuttle deploy --allow-dirty
 ```
 
+> [!NOTE]
+> If you encounter an error related to Rust edition 2024, you may need to modify the `Cargo.toml` file to use edition 2021 instead:
+> ```toml
+> [package]
+> name = "ideal-x"
+> version = "1.0.0"
+> edition = "2021"  # Changed from 2024
+> ```
+
 ### 🎉 Completed
 
 Check the online status of the bot you let join the Discord, and try mentions to see how it works!
+
+The bot should be accessible at: `https://[project-name].shuttle.app`
