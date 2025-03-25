@@ -73,7 +73,32 @@ impl EventHandler for Bot {
     async fn message(&self, ctx: Context, msg: Message) {
         if is_inclued_bot_mention(&ctx, &msg) && is_user(&msg.author) {
             let channel_id = msg.channel_id;
-            let builder = serenity::builder::GetMessages::new().limit(15);
+            
+            // チャンネルの情報を取得
+            let channel = match channel_id.to_channel(&ctx.http).await {
+                Ok(channel) => channel,
+                Err(e) => {
+                    println!("Error fetching channel: {}", e);
+                    return;
+                }
+            };
+            
+            // メッセージ取得の制限を設定
+            // フォーラム内のスレッドの場合は全てのメッセージを取得（最大100件）
+            let limit = match channel {
+                serenity::model::channel::Channel::Guild(guild_channel) => {
+                    match guild_channel.kind {
+                        serenity::model::channel::ChannelType::PublicThread |
+                        serenity::model::channel::ChannelType::PrivateThread => 100, // フォーラム内のスレッドの場合は最大数を設定
+                        _ => 15, // 通常のチャンネルの場合は15件
+                    }
+                },
+                _ => 15, // その他のチャンネルタイプの場合は15件
+            };
+            
+            println!("Fetching {} messages from channel", limit);
+            
+            let builder = serenity::builder::GetMessages::new().limit(limit);
             let messages = match channel_id.messages(&ctx.http, builder).await {
                 Ok(messages) => messages,
                 Err(e) => {
