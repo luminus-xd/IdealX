@@ -89,6 +89,11 @@ pub fn split_message(message: &str, max_length: usize) -> Vec<String> {
             let substring = &message[current_pos..end_pos];
             if let Some(last_period) = substring.rfind(|c| c == '。' || c == '.' || c == '!' || c == '?' || c == '\n') {
                 end_pos = current_pos + last_period + 1;
+                
+                // 文字境界でない場合は調整
+                while end_pos > current_pos && !message.is_char_boundary(end_pos) {
+                    end_pos -= 1;
+                }
             }
         }
 
