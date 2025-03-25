@@ -73,7 +73,7 @@ impl EventHandler for Bot {
     async fn message(&self, ctx: Context, msg: Message) {
         if is_inclued_bot_mention(&ctx, &msg) && is_user(&msg.author) {
             let channel_id = msg.channel_id;
-            let builder = serenity::builder::GetMessages::new().limit(5);
+            let builder = serenity::builder::GetMessages::new().limit(15);
             let messages = match channel_id.messages(&ctx.http, builder).await {
                 Ok(messages) => messages,
                 Err(e) => {
