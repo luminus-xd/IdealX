@@ -58,15 +58,21 @@ fn build_json(messages: Vec<Message>) -> Vec<RequestMessage<'static>> {
     messages
         .iter()
         .rev()
-        .map(|message| {
-            let content = mention_regexp.replace_all(&message.content, "").to_string();
+        .filter_map(|message| {
+            let content = mention_regexp.replace_all(&message.content, "").trim().to_string();
+            
+            // 空のコンテンツのメッセージは除外
+            if content.is_empty() {
+                info!("Skipping empty message from user: {}", message.author.name);
+                return None;
+            }
 
             let role = if is_user(&message.author) {
                 "user"
             } else {
                 "assistant"
             };
-            RequestMessage { role, content }
+            Some(RequestMessage { role, content })
         })
         .collect()
 }
@@ -232,6 +238,15 @@ impl Bot {
                     content: forum_info,
                 },
             );
+        }
+
+        // メッセージが空の場合はデフォルトメッセージを追加
+        if request_body.is_empty() {
+            info!("No valid messages found, adding default message");
+            request_body.push(RequestMessage {
+                role: "user",
+                content: "こんにちは".to_string(),
+            });
         }
 
         // タイピング中の表示を開始
