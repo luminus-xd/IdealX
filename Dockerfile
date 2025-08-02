@@ -31,5 +31,8 @@ COPY --from=builder /app/target/release/ideal-x /usr/local/bin/ideal-x
 # 実行権限を付与
 RUN chmod +x /usr/local/bin/ideal-x
 
+# ログレベルを設定
+ENV RUST_LOG=info
+
 # アプリケーションを実行
 CMD ["ideal-x"]

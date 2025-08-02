@@ -22,6 +22,7 @@ use serenity::utils::MessageBuilder;
 use std::env;
 use std::sync::Arc;
 use tracing::{error, info};
+use tracing_subscriber;
 
 // Poiseフレームワークのデータ型
 #[derive(Clone)]
@@ -350,11 +351,19 @@ impl EventHandler for Bot {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // ログの初期化
+    tracing_subscriber::fmt::init();
+    
+    info!("Starting IdealX Discord Bot...");
+    
     // 環境変数から設定を読み込む
+    info!("Loading environment variables...");
     let discord_token = env::var("DISCORD_TOKEN")
         .context("'DISCORD_TOKEN' environment variable was not found")?;
     let claude_token = env::var("CLAUDE_TOKEN")
         .context("'CLAUDE_TOKEN' environment variable was not found")?;
+    
+    info!("Environment variables loaded successfully");
 
     // ターゲットサーバーIDとフォーラムチャンネルIDを読み込む
     let target_server_ids = if let Ok(server_ids_str) = env::var("TARGET_SERVER_IDS") {
@@ -405,11 +414,12 @@ async fn main() -> anyhow::Result<()> {
         .build();
 
     // Serenityクライアントの設定
+    info!("Setting up Discord client...");
     let intents = GatewayIntents::GUILD_MESSAGES
         | GatewayIntents::DIRECT_MESSAGES
         | GatewayIntents::MESSAGE_CONTENT;
 
-    let mut client = serenity::Client::builder(discord_token, intents)
+    let mut client = match serenity::Client::builder(discord_token, intents)
         .event_handler(Bot {
             claude_token,
             client: reqwest::Client::new(),
@@ -418,12 +428,24 @@ async fn main() -> anyhow::Result<()> {
         })
         .framework(framework)
         .await
-        .expect("Err creating client");
+    {
+        Ok(client) => {
+            info!("Discord client created successfully");
+            client
+        }
+        Err(why) => {
+            error!("Error creating client: {:?}", why);
+            return Err(anyhow::anyhow!("Failed to create client: {:?}", why));
+        }
+    };
 
     // クライアントを開始
+    info!("Starting Discord client...");
     if let Err(why) = client.start().await {
         error!("Client error: {:?}", why);
+        return Err(anyhow::anyhow!("Client failed to start: {:?}", why));
     }
 
+    info!("Bot shutdown gracefully");
     Ok(())
 }
