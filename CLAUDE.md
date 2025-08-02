@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-IdealX is a Discord bot written in Rust that integrates with Anthropic's Claude AI. The bot provides intelligent responses in Discord servers and is deployed on the Shuttle hosting platform.
+IdealX is a Discord bot written in Rust that integrates with Anthropic's Claude AI. The bot provides intelligent responses in Discord servers and is deployed on the Railway hosting platform.
 
 ## Development Commands
 
@@ -25,14 +25,17 @@ cargo clippy
 
 ### Deployment
 ```bash
-# Deploy to Shuttle (first time or when secrets change)
-cargo shuttle deploy --allow-dirty
+# Deploy to Railway
+# 1. Connect GitHub repository to Railway
+# 2. Set environment variables in Railway dashboard
+# 3. Deploy automatically on git push
 
-# Regular deployment
-cargo shuttle deploy
-
-# Initialize new Shuttle project
-cargo shuttle init
+# Local testing with environment variables
+export DISCORD_TOKEN="your_discord_token"
+export CLAUDE_TOKEN="your_claude_token"
+export TARGET_SERVER_IDS="server_id1,server_id2"
+export TARGET_FORUM_CHANNEL_IDS="channel_id1,channel_id2"
+cargo run
 ```
 
 ## Architecture
@@ -41,15 +44,19 @@ cargo shuttle init
 - **Discord Integration**: Serenity framework with Poise command system
 - **AI Integration**: Anthropic Claude API (claude-sonnet-4-20250514)
 - **Async Runtime**: Tokio
-- **Hosting**: Shuttle platform
+- **Hosting**: Railway platform
 
 ### Key Modules
-- `src/main.rs`: Main bot logic, event handlers, and Shuttle runtime
+- `src/main.rs`: Main bot logic, event handlers, and main runtime
 - `src/claude.rs`: Claude API client with message splitting utilities
 - `src/commands/`: Bot slash commands (example: age calculation)
 
 ### Configuration
-- `Secrets.toml`: Contains Discord and Claude API tokens, plus target server/channel IDs for auto-response feature
+- **Environment Variables**: Contains Discord and Claude API tokens, plus target server/channel IDs for auto-response feature
+  - `DISCORD_TOKEN`: Discord bot token
+  - `CLAUDE_TOKEN`: Anthropic Claude API token
+  - `TARGET_SERVER_IDS`: Comma-separated list of Discord server IDs for auto-response
+  - `TARGET_FORUM_CHANNEL_IDS`: Comma-separated list of forum channel IDs for auto-response
 - Auto-response is enabled for specific forum channels defined in `TARGET_FORUM_CHANNEL_IDS`
 
 ## Bot Features
@@ -68,12 +75,18 @@ cargo shuttle init
 
 ## Important Notes
 
-### Secrets Management
-- Never commit `Secrets.toml` - it contains sensitive API tokens
-- Shuttle deployment requires `--allow-dirty` flag when secrets are present
+### Environment Variables Management
+- Never commit environment variables containing sensitive API tokens to version control
+- Set environment variables in Railway dashboard for production deployment
 - Bot requires "MESSAGE CONTENT INTENT" permission in Discord Developer Portal
 
 ### Dependencies
 - Uses Rust edition 2021 (not 2024) for compatibility
-- Key dependencies: shuttle-serenity, serenity, poise, reqwest, tokio
-- Built for Shuttle serverless platform with automatic scaling
+- Key dependencies: serenity, poise, reqwest, tokio, anyhow
+- Built for Railway platform with automatic scaling and container deployment
+
+### Railway Deployment
+- Dockerfile included for containerized deployment
+- Automatic deployment on git push to connected repository
+- Environment variables configured through Railway dashboard
+- Multi-stage build for optimized container size

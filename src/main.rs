@@ -19,8 +19,7 @@ use serenity::model::user::User;
 use serenity::prelude::*;
 use serenity::utils::MessageBuilder;
 
-use shuttle_runtime::SecretStore;
-
+use std::env;
 use std::sync::Arc;
 use tracing::{error, info};
 
@@ -349,19 +348,16 @@ impl EventHandler for Bot {
     }
 }
 
-#[shuttle_runtime::main]
-async fn serenity(
-    #[shuttle_runtime::Secrets] secret_store: SecretStore,
-) -> shuttle_serenity::ShuttleSerenity {
-    let discord_token = secret_store
-        .get("DISCORD_TOKEN")
-        .context("'DISCORD_TOKEN' was not found")?;
-    let claude_token = secret_store
-        .get("CLAUDE_TOKEN")
-        .context("'CLAUDE_TOKEN' was not found")?;
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // 環境変数から設定を読み込む
+    let discord_token = env::var("DISCORD_TOKEN")
+        .context("'DISCORD_TOKEN' environment variable was not found")?;
+    let claude_token = env::var("CLAUDE_TOKEN")
+        .context("'CLAUDE_TOKEN' environment variable was not found")?;
 
     // ターゲットサーバーIDとフォーラムチャンネルIDを読み込む
-    let target_server_ids = if let Some(server_ids_str) = secret_store.get("TARGET_SERVER_IDS") {
+    let target_server_ids = if let Ok(server_ids_str) = env::var("TARGET_SERVER_IDS") {
         let server_ids: Vec<u64> = server_ids_str
             .split(',')
             .filter_map(|id| id.trim().parse().ok())
@@ -372,17 +368,16 @@ async fn serenity(
         Arc::new(Vec::new())
     };
 
-    let target_forum_channel_ids =
-        if let Some(forum_ids_str) = secret_store.get("TARGET_FORUM_CHANNEL_IDS") {
-            let forum_ids: Vec<u64> = forum_ids_str
-                .split(',')
-                .filter_map(|id| id.trim().parse().ok())
-                .collect();
-            info!("Loaded {} target forum channel IDs", forum_ids.len());
-            Arc::new(forum_ids)
-        } else {
-            Arc::new(Vec::new())
-        };
+    let target_forum_channel_ids = if let Ok(forum_ids_str) = env::var("TARGET_FORUM_CHANNEL_IDS") {
+        let forum_ids: Vec<u64> = forum_ids_str
+            .split(',')
+            .filter_map(|id| id.trim().parse().ok())
+            .collect();
+        info!("Loaded {} target forum channel IDs", forum_ids.len());
+        Arc::new(forum_ids)
+    } else {
+        Arc::new(Vec::new())
+    };
 
     // クローンを作成して所有権の問題を回避
     let claude_token_for_framework = claude_token.clone();
@@ -414,7 +409,7 @@ async fn serenity(
         | GatewayIntents::DIRECT_MESSAGES
         | GatewayIntents::MESSAGE_CONTENT;
 
-    let client = serenity::Client::builder(discord_token, intents)
+    let mut client = serenity::Client::builder(discord_token, intents)
         .event_handler(Bot {
             claude_token,
             client: reqwest::Client::new(),
@@ -425,5 +420,10 @@ async fn serenity(
         .await
         .expect("Err creating client");
 
-    Ok(shuttle_serenity::SerenityService(client))
+    // クライアントを開始
+    if let Err(why) = client.start().await {
+        error!("Client error: {:?}", why);
+    }
+
+    Ok(())
 }
