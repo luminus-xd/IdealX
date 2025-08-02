@@ -9,7 +9,6 @@ use regex::Regex;
 
 use poise::{serenity_prelude as serenity, serenity_prelude::ActivityData};
 
-use anyhow::Context as _;
 use serenity::async_trait;
 use serenity::model::channel::Message;
 use serenity::model::gateway::Ready;
