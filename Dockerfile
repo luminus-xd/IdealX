@@ -1,10 +1,10 @@
-# Rustビルド用のステージ
-FROM rust:1.75 as builder
+# Rustビルド用のステージ（最新バージョンを使用）
+FROM rust:1.82 as builder
 
 WORKDIR /app
 
-# 依存関係のキャッシュを利用するために、Cargo.tomlとCargo.lockを先にコピー
-COPY Cargo.toml Cargo.lock ./
+# 依存関係のキャッシュを利用するために、Cargo.tomlを先にコピー
+COPY Cargo.toml ./
 
 # ダミーのmain.rsを作成して依存関係をビルド
 RUN mkdir src && echo "fn main() {}" > src/main.rs
