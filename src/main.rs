@@ -358,22 +358,58 @@ async fn main() -> anyhow::Result<()> {
     
     // 環境変数から設定を読み込む
     info!("Loading environment variables...");
-    let discord_token = env::var("DISCORD_TOKEN")
-        .context("'DISCORD_TOKEN' environment variable was not found")?;
-    let claude_token = env::var("CLAUDE_TOKEN")
-        .context("'CLAUDE_TOKEN' environment variable was not found")?;
+    
+    // デバッグ: 利用可能な環境変数をリスト
+    info!("Available environment variables:");
+    for (key, value) in env::vars() {
+        if key.contains("DISCORD") || key.contains("CLAUDE") || key.contains("TARGET") {
+            info!("  {}: {} characters", key, value.len());
+        }
+    }
+    
+    let discord_token = match env::var("DISCORD_TOKEN") {
+        Ok(token) => {
+            info!("DISCORD_TOKEN found (length: {})", token.len());
+            if token.is_empty() {
+                error!("DISCORD_TOKEN is empty!");
+                return Err(anyhow::anyhow!("DISCORD_TOKEN is empty"));
+            }
+            token
+        }
+        Err(e) => {
+            error!("DISCORD_TOKEN not found: {}", e);
+            return Err(anyhow::anyhow!("DISCORD_TOKEN environment variable was not found: {}", e));
+        }
+    };
+    
+    let claude_token = match env::var("CLAUDE_TOKEN") {
+        Ok(token) => {
+            info!("CLAUDE_TOKEN found (length: {})", token.len());
+            if token.is_empty() {
+                error!("CLAUDE_TOKEN is empty!");
+                return Err(anyhow::anyhow!("CLAUDE_TOKEN is empty"));
+            }
+            token
+        }
+        Err(e) => {
+            error!("CLAUDE_TOKEN not found: {}", e);
+            return Err(anyhow::anyhow!("CLAUDE_TOKEN environment variable was not found: {}", e));
+        }
+    };
     
     info!("Environment variables loaded successfully");
 
     // ターゲットサーバーIDとフォーラムチャンネルIDを読み込む
+    info!("Loading target server configuration...");
     let target_server_ids = if let Ok(server_ids_str) = env::var("TARGET_SERVER_IDS") {
         let server_ids: Vec<u64> = server_ids_str
             .split(',')
             .filter_map(|id| id.trim().parse().ok())
             .collect();
-        info!("Loaded {} target server IDs", server_ids.len());
+        info!("Loaded {} target server IDs: {:?}", server_ids.len(), server_ids);
         Arc::new(server_ids)
     } else {
+        info!("No TARGET_SERVER_IDS found, using empty list");
         Arc::new(Vec::new())
     };
 
@@ -382,9 +418,10 @@ async fn main() -> anyhow::Result<()> {
             .split(',')
             .filter_map(|id| id.trim().parse().ok())
             .collect();
-        info!("Loaded {} target forum channel IDs", forum_ids.len());
+        info!("Loaded {} target forum channel IDs: {:?}", forum_ids.len(), forum_ids);
         Arc::new(forum_ids)
     } else {
+        info!("No TARGET_FORUM_CHANNEL_IDS found, using empty list");
         Arc::new(Vec::new())
     };
 
@@ -392,19 +429,30 @@ async fn main() -> anyhow::Result<()> {
     let claude_token_for_framework = claude_token.clone();
 
     // Poiseフレームワークの設定
+    info!("Setting up Poise framework...");
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![commands::age::age()],
             ..Default::default()
         })
-        .setup(move |ctx, _ready, framework| {
-            // moveキーワードを追加して変数の所有権をクロージャに移動
-            // claude_token_for_frameworkの所有権がクロージャに移動するので、
-            // 内部でのクローンは不要になります
-
+        .setup(move |ctx, ready, framework| {
+            info!("Poise framework setup callback called");
+            info!("Bot {} is connected via Poise!", ready.user.name);
+            info!("Bot user ID: {}", ready.user.id);
+            info!("Connected to {} guilds", ready.guilds.len());
+            
+            // Botのアクティビティを設定（Poiseのsetup内で）
+            ctx.set_presence(Some(ActivityData::playing("Good Night")), OnlineStatus::Idle);
+            
             Box::pin(async move {
+                info!("Registering commands globally...");
                 // グローバルにコマンドを登録
-                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+                match poise::builtins::register_globally(ctx, &framework.options().commands).await {
+                    Ok(_) => info!("Commands registered successfully"),
+                    Err(e) => error!("Failed to register commands: {:?}", e),
+                }
+                
+                info!("Creating framework data...");
                 Ok(Data {
                     claude_token: claude_token_for_framework,
                     client: reqwest::Client::new(),
@@ -412,6 +460,8 @@ async fn main() -> anyhow::Result<()> {
             })
         })
         .build();
+    
+    info!("Poise framework created successfully");
 
     // Serenityクライアントの設定
     info!("Setting up Discord client...");
@@ -419,18 +469,22 @@ async fn main() -> anyhow::Result<()> {
         | GatewayIntents::DIRECT_MESSAGES
         | GatewayIntents::MESSAGE_CONTENT;
 
+    // Botの設定を作成
+    let bot_handler = Bot {
+        claude_token,
+        client: reqwest::Client::new(),
+        target_server_ids,
+        target_forum_channel_ids,
+    };
+
+    info!("Creating Discord client with bot handler and framework...");
     let mut client = match serenity::Client::builder(discord_token, intents)
-        .event_handler(Bot {
-            claude_token,
-            client: reqwest::Client::new(),
-            target_server_ids,
-            target_forum_channel_ids,
-        })
+        .event_handler(bot_handler)
         .framework(framework)
         .await
     {
         Ok(client) => {
-            info!("Discord client created successfully");
+            info!("Discord client created successfully with both handler and framework");
             client
         }
         Err(why) => {
@@ -441,9 +495,41 @@ async fn main() -> anyhow::Result<()> {
 
     // クライアントを開始
     info!("Starting Discord client...");
-    if let Err(why) = client.start().await {
-        error!("Client error: {:?}", why);
-        return Err(anyhow::anyhow!("Client failed to start: {:?}", why));
+    
+    // シグナルハンドリングを設定
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("Failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        result = client.start() => {
+            if let Err(why) = result {
+                error!("Client error: {:?}", why);
+                // エラーでもすぐに終了せずに、しばらく待つ
+                info!("Waiting before exit due to client error...");
+                tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+                return Err(anyhow::anyhow!("Client failed to start: {:?}", why));
+            }
+        }
+        _ = ctrl_c => {
+            info!("Received Ctrl+C, shutting down...");
+        }
+        _ = terminate => {
+            info!("Received terminate signal, shutting down...");
+        }
     }
 
     info!("Bot shutdown gracefully");
