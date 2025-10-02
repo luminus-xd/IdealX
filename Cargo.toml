@@ -20,7 +20,10 @@ tokio = { version = "1.26.0", features = ["full"] }
 tracing = "0.1.37"
 tracing-subscriber = "0.3"
 regex = "1.10.2"
-reqwest = { version = "0.12.3", features = ["json"] }
+reqwest = { version = "0.12.3", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 log = "0.4"
