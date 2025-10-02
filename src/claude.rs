@@ -1,3 +1,4 @@
+use crate::ai_utils::RequestMessage;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
@@ -55,12 +56,6 @@ struct ClaudeRequest<'a> {
     max_tokens: u32,
 }
 
-#[derive(Serialize, Clone, Debug)]
-pub struct RequestMessage<'a> {
-    pub role: &'a str,
-    pub content: String,
-}
-
 /// Claudeにリクエストを送信、レスポンスを取得
 pub async fn get_claude_response(
     messages: Vec<RequestMessage<'_>>, // リクエストに含めるメッセージのベクター
@@ -77,8 +72,11 @@ pub async fn get_claude_response(
         max_tokens: MAX_TOKENS,
     };
 
-    info!("Sending request to Claude API with {} messages", request_body.messages.len());
-    
+    info!(
+        "Sending request to Claude API with {} messages",
+        request_body.messages.len()
+    );
+
     let http_response = client
         .post(URL)
         .header("Content-Type", "application/json")
@@ -87,35 +85,42 @@ pub async fn get_claude_response(
         .json(&request_body)
         .send()
         .await?;
-        
+
     let status = http_response.status();
     info!("Claude API responded with status: {}", status);
-    
+
     if !status.is_success() {
         let error_text = http_response.text().await?;
         error!("Claude API error response: {}", error_text);
-        return Err(ClaudeError::ApiError(
-            format!("Claude API error: {} - {}", status, error_text)
-        ));
+        return Err(ClaudeError::ApiError(format!(
+            "Claude API error: {} - {}",
+            status, error_text
+        )));
     }
-    
+
     let response_text = http_response.text().await?;
     info!("Raw Claude API response: {}", response_text);
-    
-    let response: ClaudeResponse = serde_json::from_str(&response_text)
-        .map_err(|e| {
-            error!("Failed to parse Claude response: {} - Response: {}", e, response_text);
-            ClaudeError::ParseError(format!("JSON parse error: {}", e))
-        })?;
+
+    let response: ClaudeResponse = serde_json::from_str(&response_text).map_err(|e| {
+        error!(
+            "Failed to parse Claude response: {} - Response: {}",
+            e, response_text
+        );
+        ClaudeError::ParseError(format!("JSON parse error: {}", e))
+    })?;
 
     // エラーレスポンスの確認
     if let Some(error) = response.error {
-        error!("Claude API returned error: {} - {}", error.error_type, error.message);
-        return Err(ClaudeError::ApiError(
-            format!("Claude API error: {}", error.message)
-        ));
+        error!(
+            "Claude API returned error: {} - {}",
+            error.error_type, error.message
+        );
+        return Err(ClaudeError::ApiError(format!(
+            "Claude API error: {}",
+            error.message
+        )));
     }
-    
+
     // テキストコンテンツを結合
     let content = response
         .content
@@ -129,44 +134,4 @@ pub async fn get_claude_response(
     info!("Response content length: {}", content.len());
 
     Ok(content)
-}
-
-/// Discordのメッセージ制限（2000文字）に合わせてメッセージを分割する
-pub fn split_message(message: &str, max_length: usize) -> Vec<String> {
-    if message.len() <= max_length {
-        return vec![message.to_string()];
-    }
-
-    let mut result = Vec::new();
-    let mut current_pos = 0;
-
-    while current_pos < message.len() {
-        let mut end_pos = std::cmp::min(current_pos + max_length, message.len());
-
-        // 文字の途中で切らないように調整
-        if end_pos < message.len() {
-            // 最後の空白または改行を探す
-            while end_pos > current_pos && !message.is_char_boundary(end_pos) {
-                end_pos -= 1;
-            }
-
-            // 文の途中で切らないように、最後の文章の区切りを探す
-            let substring = &message[current_pos..end_pos];
-            if let Some(last_period) =
-                substring.rfind(['。', '.', '!', '?', '\n'])
-            {
-                end_pos = current_pos + last_period + 1;
-
-                // 文字境界でない場合は調整
-                while end_pos > current_pos && !message.is_char_boundary(end_pos) {
-                    end_pos -= 1;
-                }
-            }
-        }
-
-        result.push(message[current_pos..end_pos].to_string());
-        current_pos = end_pos;
-    }
-
-    result
 }

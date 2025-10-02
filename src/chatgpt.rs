@@ -1,3 +1,4 @@
+use crate::ai_utils::RequestMessage;
 use reqwest;
 use reqwest::Error;
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,7 @@ struct Choice {
 
 #[derive(Deserialize, Debug)]
 struct ResponseMessage {
+    #[allow(dead_code)]
     role: String,
     content: String,
 }
@@ -22,12 +24,6 @@ struct ResponseMessage {
 struct ChatRequest<'a> {
     model: &'a str,
     messages: Vec<RequestMessage<'a>>,
-}
-
-#[derive(Serialize, Clone, Debug)]
-pub struct RequestMessage<'a> {
-    pub role: &'a str,
-    pub content: String,
 }
 
 /// GPTにリクエストを送信、レスポンスを取得
