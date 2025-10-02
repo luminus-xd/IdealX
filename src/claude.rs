@@ -68,7 +68,7 @@ pub async fn get_claude_response(
     client: &reqwest::Client,          // reqwestのクライアントインスタンス
 ) -> Result<String, ClaudeError> {
     const URL: &str = "https://api.anthropic.com/v1/messages";
-    const CLAUDE_MODEL: &str = "claude-sonnet-4-20250514"; // Claudeのモデル名
+    const CLAUDE_MODEL: &str = "claude-sonnet-4-5-20250929"; // Claudeのモデル名
     const MAX_TOKENS: u32 = 4096; // 最大トークン数
 
     let request_body = ClaudeRequest {
@@ -77,8 +77,11 @@ pub async fn get_claude_response(
         max_tokens: MAX_TOKENS,
     };
 
-    info!("Sending request to Claude API with {} messages", request_body.messages.len());
-    
+    info!(
+        "Sending request to Claude API with {} messages",
+        request_body.messages.len()
+    );
+
     let http_response = client
         .post(URL)
         .header("Content-Type", "application/json")
@@ -87,35 +90,42 @@ pub async fn get_claude_response(
         .json(&request_body)
         .send()
         .await?;
-        
+
     let status = http_response.status();
     info!("Claude API responded with status: {}", status);
-    
+
     if !status.is_success() {
         let error_text = http_response.text().await?;
         error!("Claude API error response: {}", error_text);
-        return Err(ClaudeError::ApiError(
-            format!("Claude API error: {} - {}", status, error_text)
-        ));
+        return Err(ClaudeError::ApiError(format!(
+            "Claude API error: {} - {}",
+            status, error_text
+        )));
     }
-    
+
     let response_text = http_response.text().await?;
     info!("Raw Claude API response: {}", response_text);
-    
-    let response: ClaudeResponse = serde_json::from_str(&response_text)
-        .map_err(|e| {
-            error!("Failed to parse Claude response: {} - Response: {}", e, response_text);
-            ClaudeError::ParseError(format!("JSON parse error: {}", e))
-        })?;
+
+    let response: ClaudeResponse = serde_json::from_str(&response_text).map_err(|e| {
+        error!(
+            "Failed to parse Claude response: {} - Response: {}",
+            e, response_text
+        );
+        ClaudeError::ParseError(format!("JSON parse error: {}", e))
+    })?;
 
     // エラーレスポンスの確認
     if let Some(error) = response.error {
-        error!("Claude API returned error: {} - {}", error.error_type, error.message);
-        return Err(ClaudeError::ApiError(
-            format!("Claude API error: {}", error.message)
-        ));
+        error!(
+            "Claude API returned error: {} - {}",
+            error.error_type, error.message
+        );
+        return Err(ClaudeError::ApiError(format!(
+            "Claude API error: {}",
+            error.message
+        )));
     }
-    
+
     // テキストコンテンツを結合
     let content = response
         .content
@@ -152,9 +162,7 @@ pub fn split_message(message: &str, max_length: usize) -> Vec<String> {
 
             // 文の途中で切らないように、最後の文章の区切りを探す
             let substring = &message[current_pos..end_pos];
-            if let Some(last_period) =
-                substring.rfind(['。', '.', '!', '?', '\n'])
-            {
+            if let Some(last_period) = substring.rfind(['。', '.', '!', '?', '\n']) {
                 end_pos = current_pos + last_period + 1;
 
                 // 文字境界でない場合は調整
