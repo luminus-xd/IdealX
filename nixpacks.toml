@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ["openssl", "pkg-config"]
+
+[phases.build]
+cmds = ["cargo build --release"]
+
+[start]
+cmd = "./target/release/ideal-x"
