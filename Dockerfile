@@ -1,5 +1,5 @@
-# Rustビルド用のステージ（最新バージョンを使用）
-FROM rust:1.82 as builder
+# Rustビルド用のステージ
+FROM rust:1.83 as builder
 
 WORKDIR /app
 
