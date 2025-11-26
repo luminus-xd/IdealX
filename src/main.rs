@@ -248,21 +248,30 @@ impl Bot {
             });
         }
 
+        // システムプロンプトの定義
+        const SYSTEM_PROMPT: &str = include_str!("../system_prompt.md");
+
         // タイピング中の表示を開始
         let _typing = msg.channel_id.start_typing(&ctx.http);
-        let claude_message =
-            match get_claude_response(request_body, &self.claude_token, &self.client).await {
-                Ok(text) => text,
-                Err(e) => {
-                    error!("Error Claude response: {}", e);
-                    // エラーの詳細をユーザーに通知
-                    let error_msg = format!("Claude APIエラーが発生しました: {}", e);
-                    if let Err(send_err) = msg.channel_id.say(&ctx.http, &error_msg).await {
-                        error!("Failed to send error message: {:?}", send_err);
-                    }
-                    return;
+        let claude_message = match get_claude_response(
+            request_body,
+            &self.claude_token,
+            &self.client,
+            Some(SYSTEM_PROMPT),
+        )
+        .await
+        {
+            Ok(text) => text,
+            Err(e) => {
+                error!("Error Claude response: {}", e);
+                // エラーの詳細をユーザーに通知
+                let error_msg = format!("Claude APIエラーが発生しました: {}", e);
+                if let Err(send_err) = msg.channel_id.say(&ctx.http, &error_msg).await {
+                    error!("Failed to send error message: {:?}", send_err);
                 }
-            };
+                return;
+            }
+        };
 
         // メッセージを2000文字ごとに分割
         const DISCORD_MAX_LENGTH: usize = 2000;

@@ -53,6 +53,8 @@ struct ClaudeRequest<'a> {
     model: &'a str,
     messages: Vec<RequestMessage<'a>>,
     max_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system: Option<&'a str>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -66,6 +68,7 @@ pub async fn get_claude_response(
     messages: Vec<RequestMessage<'_>>, // リクエストに含めるメッセージのベクター
     claude_token: &str,                // Claude APIのアクセストークン
     client: &reqwest::Client,          // reqwestのクライアントインスタンス
+    system_prompt: Option<&str>,       // システムプロンプト
 ) -> Result<String, ClaudeError> {
     const URL: &str = "https://api.anthropic.com/v1/messages";
     const CLAUDE_MODEL: &str = "claude-opus-4-5-20251101"; // Claudeのモデル名
@@ -75,6 +78,7 @@ pub async fn get_claude_response(
         model: CLAUDE_MODEL,
         messages,
         max_tokens: MAX_TOKENS,
+        system: system_prompt,
     };
 
     info!(
