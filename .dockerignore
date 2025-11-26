@@ -4,7 +4,7 @@ Dockerfile
 .git/
 .gitignore
 README.md
-*.md
+CLAUDE.md
 Secrets.toml
 .env
 *.log
