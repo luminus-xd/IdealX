@@ -68,7 +68,7 @@ pub async fn get_claude_response(
     client: &reqwest::Client,          // reqwestのクライアントインスタンス
 ) -> Result<String, ClaudeError> {
     const URL: &str = "https://api.anthropic.com/v1/messages";
-    const CLAUDE_MODEL: &str = "claude-sonnet-4-5-20250929"; // Claudeのモデル名
+    const CLAUDE_MODEL: &str = "claude-opus-4-5-20251101"; // Claudeのモデル名
     const MAX_TOKENS: u32 = 4096; // 最大トークン数
 
     let request_body = ClaudeRequest {
