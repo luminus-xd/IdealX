@@ -42,7 +42,7 @@ pub async fn get_claude_response(
     const URL: &str = "https://api.anthropic.com/v1/messages";
     const CLAUDE_MODEL: &str = "claude-sonnet-4-6";
     const MAX_TOKENS: u32 = 4096;
-    const MAX_ITERATIONS: u8 = 10;
+    const MAX_ITERATIONS: u8 = 6;
 
     // メッセージをJSON形式に変換（アジェンティックループ用）
     let mut messages_json: Vec<serde_json::Value> = messages
@@ -135,25 +135,34 @@ pub async fn get_claude_response(
             })
             .unwrap_or_default();
 
-        if stop_reason == "end_turn" {
-            info!("Response content length: {}", text_content.len());
-            return Ok(text_content);
+        match stop_reason {
+            "end_turn" => {
+                info!("Response content length: {}", text_content.len());
+                return Ok(text_content);
+            }
+            "pause_turn" => {
+                // pause_turn: レスポンスをアシスタントターンとして追加し、ループを継続
+                info!("Got pause_turn, continuing conversation...");
+                let assistant_content = response_json["content"].clone();
+                messages_json.push(serde_json::json!({
+                    "role": "assistant",
+                    "content": assistant_content
+                }));
+                continue;
+            }
+            "tool_use" => {
+                // tool_use: web_search_20250305はサーバーサイドツールのため通常発生しないが、
+                // 万一返ってきた場合はエラーとして扱う
+                error!("Unexpected tool_use stop_reason received (server-side tool should not require client handling)");
+                return Err(ClaudeError::ApiError(
+                    "Unexpected tool_use stop_reason from server-side tool".to_string(),
+                ));
+            }
+            other => {
+                info!("Unexpected stop_reason: {}, returning text content", other);
+                return Ok(text_content);
+            }
         }
-
-        if stop_reason == "pause_turn" {
-            // pause_turn: レスポンスをアシスタントターンとして追加し、ループを継続
-            info!("Got pause_turn, continuing conversation...");
-            let assistant_content = response_json["content"].clone();
-            messages_json.push(serde_json::json!({
-                "role": "assistant",
-                "content": assistant_content
-            }));
-            continue;
-        }
-
-        // その他のstop_reasonはそのままテキストを返す
-        info!("Unexpected stop_reason: {}, returning text content", stop_reason);
-        return Ok(text_content);
     }
 
     Err(ClaudeError::ApiError(
