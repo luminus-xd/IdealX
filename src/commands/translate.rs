@@ -1,4 +1,5 @@
 use crate::{claude::RequestMessage, Data};
+use poise::serenity_prelude::CreateEmbed;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
@@ -69,6 +70,14 @@ pub async fn translate(
         content: prompt,
     }];
 
+    // Embedフィールドの制限（1024文字）に合わせて原文を切り詰める
+    let display_text: String = if text.chars().count() > 1000 {
+        let truncated: String = text.chars().take(1000).collect();
+        format!("{}…", truncated)
+    } else {
+        text.clone()
+    };
+
     match crate::claude::get_claude_response(
         request_messages,
         &ctx.data().claude_token,
@@ -78,12 +87,19 @@ pub async fn translate(
     .await
     {
         Ok(response) => {
-            ctx.say(format!("**{}への翻訳:**\n{}", lang, response))
-                .await?;
+            let embed = CreateEmbed::new()
+                .title(format!("🌐 {} への翻訳", lang))
+                .color(0x9B59B6)
+                .field("原文", &display_text, false)
+                .field(lang, &response, false);
+            ctx.send(poise::CreateReply::default().embed(embed)).await?;
         }
         Err(e) => {
-            ctx.say(format!("翻訳中にエラーが発生しました: {}", e))
-                .await?;
+            let embed = CreateEmbed::new()
+                .title("❌ エラー")
+                .description(format!("翻訳中にエラーが発生しました: {}", e))
+                .color(0xED4245);
+            ctx.send(poise::CreateReply::default().embed(embed)).await?;
         }
     }
 

@@ -1,5 +1,5 @@
 use crate::{claude::RequestMessage, Data};
-use poise::serenity_prelude as serenity;
+use poise::serenity_prelude::{self as serenity, CreateEmbed};
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
@@ -26,7 +26,11 @@ pub async fn summarize(
         .join("\n");
 
     if formatted.is_empty() {
-        ctx.say("要約するメッセージがありません。").await?;
+        let embed = CreateEmbed::new()
+            .title("📝 要約")
+            .description("要約するメッセージがありません。")
+            .color(0xFEE75C);
+        ctx.send(poise::CreateReply::default().embed(embed)).await?;
         return Ok(());
     }
 
@@ -45,15 +49,23 @@ pub async fn summarize(
     .await
     {
         Ok(response) => {
-            ctx.say(format!(
-                "**直近{}件のメッセージの要約:**\n{}",
-                count, response
-            ))
-            .await?;
+            let embed = CreateEmbed::new()
+                .title("📝 会話の要約")
+                .description(&response)
+                .color(0x57F287)
+                .footer(serenity::CreateEmbedFooter::new(format!(
+                    "直近 {} 件のメッセージより",
+                    count
+                )))
+                .timestamp(serenity::Timestamp::now());
+            ctx.send(poise::CreateReply::default().embed(embed)).await?;
         }
         Err(e) => {
-            ctx.say(format!("要約中にエラーが発生しました: {}", e))
-                .await?;
+            let embed = CreateEmbed::new()
+                .title("❌ エラー")
+                .description(format!("要約中にエラーが発生しました: {}", e))
+                .color(0xED4245);
+            ctx.send(poise::CreateReply::default().embed(embed)).await?;
         }
     }
 
