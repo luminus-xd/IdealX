@@ -15,13 +15,13 @@ use std::collections::HashMap;
 use poise::{serenity_prelude as serenity, serenity_prelude::ActivityData};
 
 use serenity::async_trait;
+use serenity::builder::{CreateEmbed, CreateEmbedFooter, CreateMessage};
 use serenity::model::channel::{Message, Reaction, ReactionType};
 use serenity::model::gateway::Ready;
 use serenity::model::id::{ChannelId, GuildId};
 use serenity::model::user::OnlineStatus;
 use serenity::model::user::User;
 use serenity::prelude::*;
-use serenity::utils::MessageBuilder;
 
 use std::env;
 use std::sync::Arc;
@@ -334,38 +334,60 @@ impl Bot {
             Ok(text) => text,
             Err(e) => {
                 error!("Error Claude response: {}", e);
-                let error_msg = format!("Claude APIエラーが発生しました: {}", e);
-                if let Err(send_err) = msg.channel_id.say(&ctx.http, &error_msg).await {
+                let error_embed = CreateEmbed::new()
+                    .title("❌ エラー")
+                    .description(format!("Claude APIエラーが発生しました: {}", e))
+                    .color(0xED4245);
+                if let Err(send_err) = msg
+                    .channel_id
+                    .send_message(&ctx.http, CreateMessage::new().embed(error_embed))
+                    .await
+                {
                     error!("Failed to send error message: {:?}", send_err);
                 }
                 return;
             }
         };
 
-        // メッセージを2000文字ごとに分割
-        const DISCORD_MAX_LENGTH: usize = 2000;
-        let split_messages = split_message(&claude_message, DISCORD_MAX_LENGTH - 50);
+        // 最初のチャンクをEmbedで送信（最大4000文字）、超過分はプレーンテキストで続送
+        const EMBED_MAX_CHARS: usize = 4000;
+        const PLAIN_MAX_LENGTH: usize = 1950;
 
-        // 最初のメッセージ
-        let first_response = if is_inclued_bot_mention(ctx, msg) {
-            MessageBuilder::new()
-                .mention(&msg.author)
-                .push("\n")
-                .push(&split_messages[0])
-                .build()
+        let (embed_text, overflow_text) = if claude_message.chars().count() <= EMBED_MAX_CHARS {
+            (claude_message.clone(), String::new())
         } else {
-            split_messages[0].clone()
+            let split_at = claude_message
+                .char_indices()
+                .nth(EMBED_MAX_CHARS)
+                .map(|(i, _)| i)
+                .unwrap_or(claude_message.len());
+            (
+                claude_message[..split_at].to_string(),
+                claude_message[split_at..].to_string(),
+            )
         };
 
-        if let Err(why) = msg.channel_id.say(&ctx.http, &first_response).await {
-            error!("Error sending first message: {:?}", why);
+        let embed = CreateEmbed::new()
+            .description(&embed_text)
+            .color(0x5865F2);
+
+        let mut create_msg = CreateMessage::new().embed(embed);
+        if is_inclued_bot_mention(ctx, msg) {
+            create_msg = create_msg.content(format!("<@{}>", msg.author.id));
+        }
+
+        if let Err(why) = msg.channel_id.send_message(&ctx.http, create_msg).await {
+            error!("Error sending message: {:?}", why);
             return;
         }
 
-        for chunk in split_messages.iter().skip(1) {
-            if let Err(why) = msg.channel_id.say(&ctx.http, chunk).await {
-                error!("Error sending message chunk: {:?}", why);
-                break;
+        if !overflow_text.is_empty() {
+            let remaining_chunks = split_message(&overflow_text, PLAIN_MAX_LENGTH);
+            for chunk in &remaining_chunks {
+                if let Err(why) = msg.channel_id.say(&ctx.http, chunk).await {
+                    error!("Error sending message chunk: {:?}", why);
+                    break;
+                }
             }
         }
     }
@@ -488,17 +510,37 @@ impl EventHandler for Bot {
         .await
         {
             Ok(response) => {
-                let reply = format!("📝 **メッセージ要約:**\n{}", response);
-                let split_messages = split_message(&reply, 2000 - 50);
-                for chunk in &split_messages {
-                    if let Err(e) = add_reaction.channel_id.say(&ctx.http, chunk).await {
-                        error!("Error sending reaction response: {}", e);
-                        break;
-                    }
+                let author_name = message.author.name.clone();
+                let embed = CreateEmbed::new()
+                    .title("📝 メッセージ要約")
+                    .description(&response)
+                    .color(0xFEE75C)
+                    .footer(CreateEmbedFooter::new(format!(
+                        "{} のメッセージより",
+                        author_name
+                    )))
+                    .timestamp(serenity::Timestamp::now());
+                if let Err(e) = add_reaction
+                    .channel_id
+                    .send_message(&ctx.http, CreateMessage::new().embed(embed))
+                    .await
+                {
+                    error!("Error sending reaction response: {}", e);
                 }
             }
             Err(e) => {
                 error!("Error getting Claude response for reaction: {}", e);
+                let error_embed = CreateEmbed::new()
+                    .title("❌ エラー")
+                    .description(format!("要約中にエラーが発生しました: {}", e))
+                    .color(0xED4245);
+                if let Err(send_err) = add_reaction
+                    .channel_id
+                    .send_message(&ctx.http, CreateMessage::new().embed(error_embed))
+                    .await
+                {
+                    error!("Failed to send error message: {:?}", send_err);
+                }
             }
         }
     }

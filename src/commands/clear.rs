@@ -1,5 +1,6 @@
 use crate::Data;
 use chrono::Utc;
+use poise::serenity_prelude::{CreateEmbed};
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
@@ -15,7 +16,11 @@ pub async fn clear(ctx: Context<'_>) -> Result<(), Error> {
         reset_times.insert(channel_id, now);
     }
 
-    ctx.say("会話コンテキストをリセットしました。これ以降のメッセージのみAIへの入力として使用します。")
-        .await?;
+    let embed = CreateEmbed::new()
+        .title("🔄 会話リセット完了")
+        .description("会話コンテキストをリセットしました。\nこれ以降のメッセージのみ AI への入力として使用します。")
+        .color(0x57F287);
+
+    ctx.send(poise::CreateReply::default().embed(embed)).await?;
     Ok(())
 }
