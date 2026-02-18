@@ -2,17 +2,22 @@ mod claude;
 
 mod commands {
     pub mod age;
+    pub mod clear;
+    pub mod help;
+    pub mod summarize;
+    pub mod translate;
 }
 
 use claude::{get_claude_response, split_message, RequestMessage};
 use regex::Regex;
+use std::collections::HashMap;
 
 use poise::{serenity_prelude as serenity, serenity_prelude::ActivityData};
 
 use serenity::async_trait;
-use serenity::model::channel::Message;
+use serenity::model::channel::{Message, Reaction, ReactionType};
 use serenity::model::gateway::Ready;
-use serenity::model::id::GuildId;
+use serenity::model::id::{ChannelId, GuildId};
 use serenity::model::user::OnlineStatus;
 use serenity::model::user::User;
 use serenity::prelude::*;
@@ -20,14 +25,20 @@ use serenity::utils::MessageBuilder;
 
 use std::env;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::{error, info};
 use tracing_subscriber;
+
+/// チャンネルごとの会話リセット時刻を管理する型
+pub type ResetTimes =
+    Arc<RwLock<HashMap<ChannelId, chrono::DateTime<chrono::Utc>>>>;
 
 // Poiseフレームワークのデータ型
 #[derive(Clone)]
 pub struct Data {
     pub claude_token: String,
     pub client: reqwest::Client,
+    pub reset_times: ResetTimes,
 }
 
 #[derive(Clone)]
@@ -36,6 +47,7 @@ struct Bot {
     client: reqwest::Client,
     target_server_ids: Arc<Vec<u64>>,
     target_forum_channel_ids: Arc<Vec<u64>>,
+    reset_times: ResetTimes,
 }
 
 /// ユーザーかどうかを判定する関数
@@ -58,8 +70,11 @@ fn build_json(messages: Vec<Message>) -> Vec<RequestMessage<'static>> {
         .iter()
         .rev()
         .filter_map(|message| {
-            let content = mention_regexp.replace_all(&message.content, "").trim().to_string();
-            
+            let content = mention_regexp
+                .replace_all(&message.content, "")
+                .trim()
+                .to_string();
+
             // 空のコンテンツのメッセージは除外
             if content.is_empty() {
                 info!("Skipping empty message from user: {}", message.author.name);
@@ -108,13 +123,10 @@ impl Bot {
         // フォーラム内のスレッドかどうかを確認
         match channel {
             serenity::model::channel::Channel::Guild(guild_channel) => {
-                // スレッドの場合、親チャンネルを確認
                 match guild_channel.kind {
                     serenity::model::channel::ChannelType::PublicThread
                     | serenity::model::channel::ChannelType::PrivateThread => {
-                        // 親チャンネルIDを取得
                         if let Some(parent_id) = guild_channel.parent_id {
-                            // 対象フォーラムチャンネルかどうか確認
                             self.target_forum_channel_ids.contains(&parent_id.get())
                         } else {
                             false
@@ -133,7 +145,6 @@ impl Bot {
         ctx: &Context,
         msg: &Message,
     ) -> (Option<String>, Option<String>) {
-        // チャンネルの情報を取得
         let channel = match msg.channel_id.to_channel(&ctx.http).await {
             Ok(channel) => channel,
             Err(e) => {
@@ -144,14 +155,11 @@ impl Bot {
 
         match channel {
             serenity::model::channel::Channel::Guild(guild_channel) => {
-                // スレッドの場合
                 match guild_channel.kind {
                     serenity::model::channel::ChannelType::PublicThread
                     | serenity::model::channel::ChannelType::PrivateThread => {
-                        // スレッドのタイトル（名前）を取得
                         let title = guild_channel.name;
 
-                        // スレッドの最初のメッセージを取得（ディスクリプションとして扱う）
                         let builder = serenity::builder::GetMessages::new().limit(1);
                         let messages = match msg.channel_id.messages(&ctx.http, builder).await {
                             Ok(messages) => messages,
@@ -161,7 +169,6 @@ impl Bot {
                             }
                         };
 
-                        // 最初のメッセージがあれば、それをディスクリプションとして使用
                         let description = if !messages.is_empty() {
                             Some(messages.last().unwrap().content.clone())
                         } else {
@@ -197,16 +204,13 @@ impl Bot {
         };
 
         // メッセージ取得の制限を設定
-        // フォーラム内のスレッドの場合は全てのメッセージを取得（最大100件）
         let limit = match channel {
-            serenity::model::channel::Channel::Guild(guild_channel) => {
-                match guild_channel.kind {
-                    serenity::model::channel::ChannelType::PublicThread
-                    | serenity::model::channel::ChannelType::PrivateThread => 100, // フォーラム内のスレッドの場合は最大数を設定
-                    _ => 5, // 通常のチャンネルの場合は15件
-                }
-            }
-            _ => 5, // その他のチャンネルタイプの場合は15件
+            serenity::model::channel::Channel::Guild(guild_channel) => match guild_channel.kind {
+                serenity::model::channel::ChannelType::PublicThread
+                | serenity::model::channel::ChannelType::PrivateThread => 100,
+                _ => 5,
+            },
+            _ => 5,
         };
 
         info!("Fetching {} messages from channel", limit);
@@ -220,12 +224,26 @@ impl Bot {
             }
         };
 
+        // リセット時刻を確認してメッセージをフィルタリング
+        let reset_time = {
+            let reset_times = self.reset_times.read().await;
+            reset_times.get(&channel_id).copied()
+        };
+
+        let filtered_messages: Vec<Message> = if let Some(reset_at) = reset_time {
+            messages
+                .into_iter()
+                .filter(|m| m.timestamp.unix_timestamp() > reset_at.timestamp())
+                .collect()
+        } else {
+            messages
+        };
+
         // 通常のメッセージをリクエスト形式に変換
-        let mut request_body: Vec<RequestMessage> = build_json(messages);
+        let mut request_body: Vec<RequestMessage> = build_json(filtered_messages);
 
         // タイトルとディスクリプションがある場合は、先頭に追加
         if let (Some(title_text), Some(desc_text)) = (title, description) {
-            // タイトルとディスクリプションを含む追加メッセージを作成
             let forum_info = format!(
                 "フォーラムタイトル: {}\nディスクリプション: {}",
                 title_text, desc_text
@@ -264,7 +282,6 @@ impl Bot {
             Ok(text) => text,
             Err(e) => {
                 error!("Error Claude response: {}", e);
-                // エラーの詳細をユーザーに通知
                 let error_msg = format!("Claude APIエラーが発生しました: {}", e);
                 if let Err(send_err) = msg.channel_id.say(&ctx.http, &error_msg).await {
                     error!("Failed to send error message: {:?}", send_err);
@@ -275,18 +292,16 @@ impl Bot {
 
         // メッセージを2000文字ごとに分割
         const DISCORD_MAX_LENGTH: usize = 2000;
-        let split_messages = split_message(&claude_message, DISCORD_MAX_LENGTH - 50); // メンションなどの余裕を持たせる
+        let split_messages = split_message(&claude_message, DISCORD_MAX_LENGTH - 50);
 
         // 最初のメッセージ
         let first_response = if is_inclued_bot_mention(ctx, msg) {
-            // メンションされた場合はメンションを含める
             MessageBuilder::new()
                 .mention(&msg.author)
                 .push("\n")
                 .push(&split_messages[0])
                 .build()
         } else {
-            // メンションされていない場合はそのまま
             split_messages[0].clone()
         };
 
@@ -295,7 +310,6 @@ impl Bot {
             return;
         }
 
-        // 残りのメッセージを送信
         for chunk in split_messages.iter().skip(1) {
             if let Err(why) = msg.channel_id.say(&ctx.http, chunk).await {
                 error!("Error sending message chunk: {:?}", why);
@@ -313,13 +327,12 @@ impl EventHandler for Bot {
             return;
         }
 
-        // メンションされた場合の処理（既存の機能）
+        // メンションされた場合の処理
         if is_inclued_bot_mention(&ctx, &msg) {
             self.process_claude_request(&ctx, &msg, None, None).await;
         }
-        // 特定のサーバーの特定のフォーラムチャンネルでの処理（新機能）
+        // 特定のサーバーの特定のフォーラムチャンネルでの処理
         else if self.should_auto_respond(&ctx, &msg).await {
-            // フォーラムのタイトルとディスクリプションを取得
             let (title, description) = self.get_forum_info(&ctx, &msg).await;
             self.process_claude_request(&ctx, &msg, title.as_deref(), description.as_deref())
                 .await;
@@ -338,20 +351,89 @@ impl EventHandler for Bot {
         }
     }
 
+    /// 📝 リアクションが追加されたときにメッセージを要約する
+    async fn reaction_add(&self, ctx: Context, add_reaction: Reaction) {
+        // 📝 リアクションのみ処理
+        let is_memo_reaction = match &add_reaction.emoji {
+            ReactionType::Unicode(s) => s == "📝",
+            _ => false,
+        };
+        if !is_memo_reaction {
+            return;
+        }
+
+        // ボットのリアクションは無視
+        if let Some(user_id) = add_reaction.user_id {
+            if let Ok(user) = user_id.to_user(&ctx.http).await {
+                if user.bot {
+                    return;
+                }
+            }
+        }
+
+        // リアクションされたメッセージを取得
+        let message = match add_reaction.message(&ctx.http).await {
+            Ok(msg) => msg,
+            Err(e) => {
+                error!("Error fetching reacted message: {}", e);
+                return;
+            }
+        };
+
+        if message.content.is_empty() {
+            return;
+        }
+
+        info!(
+            "📝 reaction received, summarizing message: {}",
+            &message.content[..message.content.len().min(50)]
+        );
+
+        const SYSTEM_PROMPT: &str = include_str!("../system_prompt.md");
+        let prompt = format!(
+            "以下のメッセージを簡潔に要約または説明してください:\n\n{}",
+            message.content
+        );
+        let request_messages = vec![RequestMessage {
+            role: "user",
+            content: prompt,
+        }];
+
+        let _typing = add_reaction.channel_id.start_typing(&ctx.http);
+
+        match get_claude_response(
+            request_messages,
+            &self.claude_token,
+            &self.client,
+            Some(SYSTEM_PROMPT),
+        )
+        .await
+        {
+            Ok(response) => {
+                let reply = format!("📝 **メッセージ要約:**\n{}", response);
+                let split_messages = split_message(&reply, 2000 - 50);
+                for chunk in &split_messages {
+                    if let Err(e) = add_reaction.channel_id.say(&ctx.http, chunk).await {
+                        error!("Error sending reaction response: {}", e);
+                        break;
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Error getting Claude response for reaction: {}", e);
+            }
+        }
+    }
+
     /// Botが起動したときのイベントハンドラ
     async fn ready(&self, ctx: Context, ready: Ready) {
         info!("{} is connected!", ready.user.name);
 
-        // Botのアクティビティを設定
         let activity = ActivityData::playing("Good Night");
-        // Botのオンラインステータスを設定
         let status = OnlineStatus::Idle;
-
-        // Botのプレゼンスを設定
         ctx.set_presence(Some(activity), status);
     }
 
-    // Serenity 0.12では cache featureが標準で含まれるようになったため、cfg属性は不要
     async fn cache_ready(&self, _ctx: Context, _guilds: Vec<GuildId>) {
         info!("cache ready");
     }
@@ -359,22 +441,18 @@ impl EventHandler for Bot {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // ログの初期化
     tracing_subscriber::fmt::init();
-    
+
     info!("Starting IdealX Discord Bot...");
-    
-    // 環境変数から設定を読み込む
     info!("Loading environment variables...");
-    
-    // デバッグ: 利用可能な環境変数をリスト
+
     info!("Available environment variables:");
     for (key, value) in env::vars() {
         if key.contains("DISCORD") || key.contains("CLAUDE") || key.contains("TARGET") {
             info!("  {}: {} characters", key, value.len());
         }
     }
-    
+
     let discord_token = match env::var("DISCORD_TOKEN") {
         Ok(token) => {
             info!("DISCORD_TOKEN found (length: {})", token.len());
@@ -386,10 +464,13 @@ async fn main() -> anyhow::Result<()> {
         }
         Err(e) => {
             error!("DISCORD_TOKEN not found: {}", e);
-            return Err(anyhow::anyhow!("DISCORD_TOKEN environment variable was not found: {}", e));
+            return Err(anyhow::anyhow!(
+                "DISCORD_TOKEN environment variable was not found: {}",
+                e
+            ));
         }
     };
-    
+
     let claude_token = match env::var("CLAUDE_TOKEN") {
         Ok(token) => {
             info!("CLAUDE_TOKEN found (length: {})", token.len());
@@ -401,46 +482,65 @@ async fn main() -> anyhow::Result<()> {
         }
         Err(e) => {
             error!("CLAUDE_TOKEN not found: {}", e);
-            return Err(anyhow::anyhow!("CLAUDE_TOKEN environment variable was not found: {}", e));
+            return Err(anyhow::anyhow!(
+                "CLAUDE_TOKEN environment variable was not found: {}",
+                e
+            ));
         }
     };
-    
+
     info!("Environment variables loaded successfully");
 
-    // ターゲットサーバーIDとフォーラムチャンネルIDを読み込む
     info!("Loading target server configuration...");
     let target_server_ids = if let Ok(server_ids_str) = env::var("TARGET_SERVER_IDS") {
         let server_ids: Vec<u64> = server_ids_str
             .split(',')
             .filter_map(|id| id.trim().parse().ok())
             .collect();
-        info!("Loaded {} target server IDs: {:?}", server_ids.len(), server_ids);
+        info!(
+            "Loaded {} target server IDs: {:?}",
+            server_ids.len(),
+            server_ids
+        );
         Arc::new(server_ids)
     } else {
         info!("No TARGET_SERVER_IDS found, using empty list");
         Arc::new(Vec::new())
     };
 
-    let target_forum_channel_ids = if let Ok(forum_ids_str) = env::var("TARGET_FORUM_CHANNEL_IDS") {
+    let target_forum_channel_ids = if let Ok(forum_ids_str) = env::var("TARGET_FORUM_CHANNEL_IDS")
+    {
         let forum_ids: Vec<u64> = forum_ids_str
             .split(',')
             .filter_map(|id| id.trim().parse().ok())
             .collect();
-        info!("Loaded {} target forum channel IDs: {:?}", forum_ids.len(), forum_ids);
+        info!(
+            "Loaded {} target forum channel IDs: {:?}",
+            forum_ids.len(),
+            forum_ids
+        );
         Arc::new(forum_ids)
     } else {
         info!("No TARGET_FORUM_CHANNEL_IDS found, using empty list");
         Arc::new(Vec::new())
     };
 
-    // クローンを作成して所有権の問題を回避
-    let claude_token_for_framework = claude_token.clone();
+    // Bot と Poise Data で共有するリセット時刻マップ
+    let reset_times: ResetTimes = Arc::new(RwLock::new(HashMap::new()));
 
-    // Poiseフレームワークの設定
+    let claude_token_for_framework = claude_token.clone();
+    let reset_times_for_framework = reset_times.clone();
+
     info!("Setting up Poise framework...");
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![commands::age::age()],
+            commands: vec![
+                commands::age::age(),
+                commands::help::help(),
+                commands::summarize::summarize(),
+                commands::translate::translate(),
+                commands::clear::clear(),
+            ],
             ..Default::default()
         })
         .setup(move |ctx, ready, framework| {
@@ -448,41 +548,43 @@ async fn main() -> anyhow::Result<()> {
             info!("Bot {} is connected via Poise!", ready.user.name);
             info!("Bot user ID: {}", ready.user.id);
             info!("Connected to {} guilds", ready.guilds.len());
-            
-            // Botのアクティビティを設定（Poiseのsetup内で）
-            ctx.set_presence(Some(ActivityData::playing("Good Night")), OnlineStatus::Idle);
-            
+
+            ctx.set_presence(
+                Some(ActivityData::playing("Good Night")),
+                OnlineStatus::Idle,
+            );
+
             Box::pin(async move {
                 info!("Registering commands globally...");
-                // グローバルにコマンドを登録
                 match poise::builtins::register_globally(ctx, &framework.options().commands).await {
                     Ok(_) => info!("Commands registered successfully"),
                     Err(e) => error!("Failed to register commands: {:?}", e),
                 }
-                
+
                 info!("Creating framework data...");
                 Ok(Data {
                     claude_token: claude_token_for_framework,
                     client: reqwest::Client::new(),
+                    reset_times: reset_times_for_framework,
                 })
             })
         })
         .build();
-    
+
     info!("Poise framework created successfully");
 
-    // Serenityクライアントの設定
     info!("Setting up Discord client...");
     let intents = GatewayIntents::GUILD_MESSAGES
         | GatewayIntents::DIRECT_MESSAGES
-        | GatewayIntents::MESSAGE_CONTENT;
+        | GatewayIntents::MESSAGE_CONTENT
+        | GatewayIntents::GUILD_MESSAGE_REACTIONS;
 
-    // Botの設定を作成
     let bot_handler = Bot {
         claude_token,
         client: reqwest::Client::new(),
         target_server_ids,
         target_forum_channel_ids,
+        reset_times,
     };
 
     info!("Creating Discord client with bot handler and framework...");
@@ -501,10 +603,8 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // クライアントを開始
     info!("Starting Discord client...");
-    
-    // シグナルハンドリングを設定
+
     let ctrl_c = async {
         tokio::signal::ctrl_c()
             .await
@@ -526,7 +626,6 @@ async fn main() -> anyhow::Result<()> {
         result = client.start() => {
             if let Err(why) = result {
                 error!("Client error: {:?}", why);
-                // エラーでもすぐに終了せずに、しばらく待つ
                 info!("Waiting before exit due to client error...");
                 tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
                 return Err(anyhow::anyhow!("Client failed to start: {:?}", why));
