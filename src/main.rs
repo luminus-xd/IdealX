@@ -63,6 +63,58 @@ fn is_inclued_bot_mention(ctx: &Context, message: &Message) -> bool {
         .any(|user| user.id == ctx.cache.current_user().id)
 }
 
+/// URLのコンテンツを取得してテキストとして返す関数
+async fn fetch_url_content(client: &reqwest::Client, url: &str) -> Option<String> {
+    let response = client
+        .get(url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .ok()?;
+
+    // text/html 以外（画像・PDFなど）はスキップ
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    if !content_type.contains("text/") {
+        return None;
+    }
+
+    let body = response.text().await.ok()?;
+
+    // scriptとstyleタグを内容ごと削除
+    let script_re = Regex::new(r"(?s)<(script|style)[^>]*>.*?</(script|style)>").unwrap();
+    let body = script_re.replace_all(&body, "").to_string();
+
+    // HTMLタグを除去
+    let tag_re = Regex::new(r"<[^>]+>").unwrap();
+    let text = tag_re.replace_all(&body, " ").to_string();
+
+    // 主要なHTMLエンティティをデコード
+    let text = text
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&nbsp;", " ");
+
+    // 連続する空白・改行を整理
+    let ws_re = Regex::new(r"\s+").unwrap();
+    let text = ws_re.replace_all(&text, " ").trim().to_string();
+
+    // 1URL あたり最大2000文字に制限
+    let text: String = text.chars().take(2000).collect();
+
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
 /// メッセージをAPIリクエスト形式に変換する関数
 fn build_json(messages: Vec<Message>) -> Vec<RequestMessage<'static>> {
     let mention_regexp = Regex::new(r"<@(\d+)>").unwrap();
@@ -380,21 +432,46 @@ impl EventHandler for Bot {
             }
         };
 
-        if message.content.is_empty() {
+        // メッセージ内のURLを抽出（最大3件）
+        let url_re = Regex::new(r#"https?://[^\s<>"]+"#).unwrap();
+        let urls: Vec<&str> = url_re
+            .find_iter(&message.content)
+            .map(|m| m.as_str())
+            .take(3)
+            .collect();
+
+        // テキストもURLも空なら処理しない
+        if message.content.is_empty() && urls.is_empty() {
             return;
         }
 
         let preview: String = message.content.chars().take(50).collect();
         info!(
-            "📝 reaction received, summarizing message: {}",
-            preview
+            "📝 reaction received, summarizing message: {} (urls: {})",
+            preview,
+            urls.len()
         );
 
+        // URLのコンテンツを並列取得
+        let mut url_contents: Vec<String> = Vec::new();
+        for url in &urls {
+            if let Some(content) = fetch_url_content(&self.client, url).await {
+                url_contents.push(format!("【URL: {}】\n{}", url, content));
+            }
+        }
+
         const SYSTEM_PROMPT: &str = include_str!("../system_prompt.md");
-        let prompt = format!(
+        let mut prompt = format!(
             "以下のメッセージを簡潔に要約または説明してください:\n\n{}",
             message.content
         );
+        if !url_contents.is_empty() {
+            prompt.push_str(&format!(
+                "\n\n--- リンク先の内容 ---\n{}",
+                url_contents.join("\n\n")
+            ));
+        }
+
         let request_messages = vec![RequestMessage {
             role: "user",
             content: prompt,
