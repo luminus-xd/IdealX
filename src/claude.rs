@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tracing::{error, info};
 
 #[derive(Debug)]
@@ -26,44 +26,13 @@ impl std::fmt::Display for ClaudeError {
 
 impl std::error::Error for ClaudeError {}
 
-#[derive(Deserialize, Debug)]
-struct ClaudeResponse {
-    content: Vec<ContentBlock>,
-    #[serde(default)]
-    error: Option<ApiError>,
-}
-
-#[derive(Deserialize, Debug)]
-struct ApiError {
-    #[serde(rename = "type")]
-    error_type: String,
-    message: String,
-}
-
-#[derive(Deserialize, Debug)]
-struct ContentBlock {
-    #[serde(rename = "type")]
-    content_type: String,
-    #[serde(default)]
-    text: Option<String>,
-}
-
-#[derive(Serialize)]
-struct ClaudeRequest<'a> {
-    model: &'a str,
-    messages: Vec<RequestMessage<'a>>,
-    max_tokens: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    system: Option<&'a str>,
-}
-
 #[derive(Serialize, Clone, Debug)]
 pub struct RequestMessage<'a> {
     pub role: &'a str,
     pub content: String,
 }
 
-/// Claudeにリクエストを送信、レスポンスを取得
+/// Claudeにリクエストを送信、レスポンスを取得（ウェブ検索ツール付き）
 pub async fn get_claude_response(
     messages: Vec<RequestMessage<'_>>, // リクエストに含めるメッセージのベクター
     claude_token: &str,                // Claude APIのアクセストークン
@@ -71,78 +40,125 @@ pub async fn get_claude_response(
     system_prompt: Option<&str>,       // システムプロンプト
 ) -> Result<String, ClaudeError> {
     const URL: &str = "https://api.anthropic.com/v1/messages";
-    const CLAUDE_MODEL: &str = "claude-sonnet-4-6"; // Claudeのモデル名
-    const MAX_TOKENS: u32 = 4096; // 最大トークン数
+    const CLAUDE_MODEL: &str = "claude-sonnet-4-6";
+    const MAX_TOKENS: u32 = 4096;
+    const MAX_ITERATIONS: u8 = 10;
 
-    let request_body = ClaudeRequest {
-        model: CLAUDE_MODEL,
-        messages,
-        max_tokens: MAX_TOKENS,
-        system: system_prompt,
-    };
+    // メッセージをJSON形式に変換（アジェンティックループ用）
+    let mut messages_json: Vec<serde_json::Value> = messages
+        .iter()
+        .map(|m| {
+            serde_json::json!({
+                "role": m.role,
+                "content": m.content
+            })
+        })
+        .collect();
+
+    // ウェブ検索ツールの定義
+    let tools = serde_json::json!([{
+        "type": "web_search_20250305",
+        "name": "web_search",
+        "max_uses": 5
+    }]);
 
     info!(
-        "Sending request to Claude API with {} messages",
-        request_body.messages.len()
+        "Sending request to Claude API with {} messages and web search tool",
+        messages_json.len()
     );
 
-    let http_response = client
-        .post(URL)
-        .header("Content-Type", "application/json")
-        .header("x-api-key", claude_token)
-        .header("anthropic-version", "2023-06-01")
-        .json(&request_body)
-        .send()
-        .await?;
+    for iteration in 0..MAX_ITERATIONS {
+        let mut request_body = serde_json::json!({
+            "model": CLAUDE_MODEL,
+            "max_tokens": MAX_TOKENS,
+            "messages": messages_json,
+            "tools": tools
+        });
 
-    let status = http_response.status();
-    info!("Claude API responded with status: {}", status);
+        if let Some(system) = system_prompt {
+            request_body["system"] = serde_json::json!(system);
+        }
 
-    if !status.is_success() {
-        let error_text = http_response.text().await?;
-        error!("Claude API error response: {}", error_text);
-        return Err(ClaudeError::ApiError(format!(
-            "Claude API error: {} - {}",
-            status, error_text
-        )));
+        let http_response = client
+            .post(URL)
+            .header("Content-Type", "application/json")
+            .header("x-api-key", claude_token)
+            .header("anthropic-version", "2023-06-01")
+            .json(&request_body)
+            .send()
+            .await?;
+
+        let status = http_response.status();
+        info!("Claude API responded with status: {}", status);
+
+        if !status.is_success() {
+            let error_text = http_response.text().await?;
+            error!("Claude API error response: {}", error_text);
+            return Err(ClaudeError::ApiError(format!(
+                "Claude API error: {} - {}",
+                status, error_text
+            )));
+        }
+
+        let response_json: serde_json::Value = http_response
+            .json()
+            .await
+            .map_err(|e| ClaudeError::ParseError(format!("JSON parse error: {}", e)))?;
+
+        info!(
+            "Claude API response (iteration {}): stop_reason={}",
+            iteration, response_json["stop_reason"]
+        );
+
+        // APIエラーの確認
+        if let Some(error) = response_json["error"].as_object() {
+            let msg = error
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown error");
+            error!("Claude API returned error: {}", msg);
+            return Err(ClaudeError::ApiError(format!("Claude API error: {}", msg)));
+        }
+
+        let stop_reason = response_json["stop_reason"].as_str().unwrap_or("end_turn");
+
+        // テキストコンテンツを抽出
+        let text_content: String = response_json["content"]
+            .as_array()
+            .map(|blocks| {
+                blocks
+                    .iter()
+                    .filter(|b| b["type"] == "text")
+                    .filter_map(|b| b["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .unwrap_or_default();
+
+        if stop_reason == "end_turn" {
+            info!("Response content length: {}", text_content.len());
+            return Ok(text_content);
+        }
+
+        if stop_reason == "pause_turn" {
+            // pause_turn: レスポンスをアシスタントターンとして追加し、ループを継続
+            info!("Got pause_turn, continuing conversation...");
+            let assistant_content = response_json["content"].clone();
+            messages_json.push(serde_json::json!({
+                "role": "assistant",
+                "content": assistant_content
+            }));
+            continue;
+        }
+
+        // その他のstop_reasonはそのままテキストを返す
+        info!("Unexpected stop_reason: {}, returning text content", stop_reason);
+        return Ok(text_content);
     }
 
-    let response_text = http_response.text().await?;
-    info!("Raw Claude API response: {}", response_text);
-
-    let response: ClaudeResponse = serde_json::from_str(&response_text).map_err(|e| {
-        error!(
-            "Failed to parse Claude response: {} - Response: {}",
-            e, response_text
-        );
-        ClaudeError::ParseError(format!("JSON parse error: {}", e))
-    })?;
-
-    // エラーレスポンスの確認
-    if let Some(error) = response.error {
-        error!(
-            "Claude API returned error: {} - {}",
-            error.error_type, error.message
-        );
-        return Err(ClaudeError::ApiError(format!(
-            "Claude API error: {}",
-            error.message
-        )));
-    }
-
-    // テキストコンテンツを結合
-    let content = response
-        .content
-        .iter()
-        .filter(|block| block.content_type == "text")
-        .filter_map(|block| block.text.as_ref())
-        .cloned()
-        .collect::<Vec<String>>()
-        .join("");
-
-    info!("Response content length: {}", content.len());
-
-    Ok(content)
+    Err(ClaudeError::ApiError(
+        "ウェブ検索ループの最大試行回数を超えました".to_string(),
+    ))
 }
 
 /// Discordのメッセージ制限（2000文字）に合わせてメッセージを分割する
