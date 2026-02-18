@@ -384,9 +384,10 @@ impl EventHandler for Bot {
             return;
         }
 
+        let preview: String = message.content.chars().take(50).collect();
         info!(
             "📝 reaction received, summarizing message: {}",
-            &message.content[..message.content.len().min(50)]
+            preview
         );
 
         const SYSTEM_PROMPT: &str = include_str!("../system_prompt.md");
