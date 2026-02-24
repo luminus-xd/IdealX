@@ -67,7 +67,6 @@ cargo run
 - Responds to mentions using Claude AI with conversation context (last 5 messages)
 - Auto-responds in configured forum channels without requiring mentions
 - Automatically splits responses >2000 characters to comply with Discord limits
-- Converts Twitter/X URLs to vxtwitter.com format
 
 ### Technical Implementation
 - Event-driven architecture using Serenity's event handlers

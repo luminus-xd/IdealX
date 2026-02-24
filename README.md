@@ -25,7 +25,6 @@ Anthropic Claude APIと連携して、メンションや特定のフォーラム
 | `/clear` | チャンネルの会話コンテキストをリセット |
 
 **その他**
-- X（旧Twitter）のURLを自動でvxtwitter.comに変換
 - `ぬるぽ` → `ガッ`
 
 ## 必要なもの
