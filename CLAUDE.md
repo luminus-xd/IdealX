@@ -6,23 +6,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-IdealX is a Discord bot written in Rust that integrates with Anthropic's Claude AI. The bot provides intelligent responses in Discord servers and is deployed on the Railway hosting platform.
+IdealX is a Discord bot built with Vercel Chat SDK and AI SDK that integrates with Anthropic's Claude AI. The bot provides intelligent responses in Discord servers and is deployed on the Railway hosting platform.
 
 ## Development Commands
 
-### Build and Test
+### Build and Run
 ```bash
-# Build the project
-cargo build
+# Install dependencies
+npm install
 
-# Run locally (requires valid tokens in Secrets.toml)
-cargo run
+# Run in development mode (with hot reload)
+npm run dev
 
-# Format code
-cargo fmt
+# Build for production
+npm run build
 
-# Lint code
-cargo clippy
+# Run production build
+npm start
+
+# Register Discord slash commands (first time only)
+npm run register
 ```
 
 ### Deployment
@@ -33,61 +36,65 @@ cargo clippy
 # 3. Deploy automatically on git push
 
 # Local testing with environment variables
-export DISCORD_TOKEN="your_discord_token"
-export CLAUDE_TOKEN="your_claude_token"
-export TARGET_SERVER_IDS="server_id1,server_id2"
-export TARGET_FORUM_CHANNEL_IDS="channel_id1,channel_id2"
-cargo run
+cp .env.example .env
+# Edit .env with your tokens
+npm run dev
 ```
 
 ## Architecture
 
 ### Core Framework Stack
-- **Discord Integration**: Serenity framework with Poise command system
-- **AI Integration**: Anthropic Claude API (claude-sonnet-4-20250514)
-- **Async Runtime**: Tokio
+- **Bot Framework**: Vercel Chat SDK (`chat` + `@chat-adapter/discord`)
+- **AI Integration**: AI SDK (`ai` + `@ai-sdk/anthropic`) with Claude claude-sonnet-4-6
+- **HTTP Server**: Hono with @hono/node-server
 - **Hosting**: Railway platform
 
 ### Key Modules
-- `src/main.rs`: Main bot logic, event handlers, and main runtime
-- `src/claude.rs`: Claude API client with message splitting utilities
-- `src/commands/`: Bot slash commands (example: age calculation)
+- `src/index.ts`: Hono server, webhook endpoint, gateway listener startup
+- `src/lib/bot.ts`: Chat SDK bot instance, all event handlers (mention, forum, reaction, commands)
+- `src/lib/ai.ts`: AI SDK integration (generateText with web search, summarize, translate)
+- `src/lib/adapters.ts`: Discord adapter configuration
+- `src/register-commands.ts`: Discord slash command registration script
 
 ### Configuration
-- **Environment Variables**: Contains Discord and Claude API tokens, plus target server/channel IDs for auto-response feature
-  - `DISCORD_TOKEN`: Discord bot token
-  - `CLAUDE_TOKEN`: Anthropic Claude API token
+- **Environment Variables**:
+  - `DISCORD_BOT_TOKEN`: Discord bot token
+  - `DISCORD_PUBLIC_KEY`: Discord Ed25519 public key for webhook verification
+  - `DISCORD_APPLICATION_ID`: Discord application ID
+  - `ANTHROPIC_API_KEY`: Anthropic Claude API key
   - `TARGET_SERVER_IDS`: Comma-separated list of Discord server IDs for auto-response
   - `TARGET_FORUM_CHANNEL_IDS`: Comma-separated list of forum channel IDs for auto-response
-- Auto-response is enabled for specific forum channels defined in `TARGET_FORUM_CHANNEL_IDS`
+  - `PORT`: Server port (default: 3000)
 
 ## Bot Features
 
-### Message Handling
-- Responds to mentions using Claude AI with conversation context (last 5 messages)
-- Auto-responds in configured forum channels without requiring mentions
-- Automatically splits responses >2000 characters to comply with Discord limits
+### Event Handlers
+- `onNewMention`: Responds to mentions with Claude AI (last 5 messages context)
+- `onSubscribedMessage`: Handles follow-up messages in subscribed threads/forums
+- `onNewMessage(/.*/s)`: Auto-responds in configured forum channels
+- `onNewMessage(/ぬるぽ/)`: Easter egg
+- `onReaction(['📝'])`: Summarizes reacted message and URL contents
+- `onSlashCommand`: help, age, summarize, translate, clear
 
 ### Technical Implementation
-- Event-driven architecture using Serenity's event handlers
-- Message context gathering via `get_channel_messages()`
-- Intelligent message splitting in `split_message()` function
-- Server/channel targeting via configuration-driven approach
+- Webhook-based architecture for Discord interactions
+- Gateway listener for real-time message/reaction events
+- AI SDK generateText with Anthropic web search tool (maxSteps: 6)
+- Intelligent message splitting for Discord's 2000-char limit
 
 ## Important Notes
 
 ### Environment Variables Management
-- Never commit environment variables containing sensitive API tokens to version control
-- Set environment variables in Railway dashboard for production deployment
-- Bot requires "MESSAGE CONTENT INTENT" permission in Discord Developer Portal
+- Never commit API tokens to version control
+- Use `.env` file for local development
+- Set environment variables in Railway dashboard for production
 
-### Dependencies
-- Uses Rust edition 2021 (not 2024) for compatibility
-- Key dependencies: serenity, poise, reqwest, tokio, anyhow
-- Built for Railway platform with automatic scaling and container deployment
+### Discord Setup
+- Bot requires "MESSAGE CONTENT INTENT" in Discord Developer Portal
+- Set Interactions Endpoint URL to `https://<domain>/api/webhooks/discord`
+- Run `npm run register` to register slash commands
 
 ### Railway Deployment
 - Dockerfile included for containerized deployment
-- Automatic deployment on git push to connected repository
-- Environment variables configured through Railway dashboard
-- Multi-stage build for optimized container size
+- Multi-stage Node.js build for optimized container size
+- Automatic deployment on git push

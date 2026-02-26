@@ -1,10 +1,10 @@
-target/
-Dockerfile
-.dockerignore
+node_modules/
+dist/
 .git/
 .gitignore
-README.md
-CLAUDE.md
-Secrets.toml
 .env
 *.log
+README.md
+CLAUDE.md
+LICENSE
+.env.example
