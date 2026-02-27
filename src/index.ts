@@ -45,15 +45,35 @@ async function startGatewayListener() {
   while (true) {
     try {
       console.log("Starting Discord gateway listener...");
-      await (discordAdapter as { startGatewayListener: Function }).startGatewayListener({
-        webhookUrl,
-        signal: AbortSignal.timeout(24 * 60 * 60 * 1000), // 24時間
+      let resolveGateway!: () => void;
+      const gatewayDone = new Promise<void>((resolve) => {
+        resolveGateway = resolve;
       });
+
+      const adapter = discordAdapter as {
+        startGatewayListener: (
+          options: { waitUntil: (p: Promise<unknown>) => void },
+          durationMs: number,
+          abortSignal: undefined,
+          webhookUrl: string,
+        ) => Promise<unknown>;
+      };
+      await adapter.startGatewayListener(
+        {
+          waitUntil: (promise: Promise<unknown>) => {
+            promise.then(resolveGateway, resolveGateway);
+          },
+        },
+        24 * 60 * 60 * 1000, // 24時間
+        undefined,
+        webhookUrl,
+      );
+
+      // Gateway が終了するまで待機
+      await gatewayDone;
+
+      console.log("Gateway listener finished, restarting...");
     } catch (error) {
-      if (error instanceof Error && error.name === "TimeoutError") {
-        console.log("Gateway listener timed out, restarting...");
-        continue;
-      }
       console.error("Gateway listener error:", error);
       // 再接続まで5秒待機
       await new Promise((resolve) => setTimeout(resolve, 5000));
