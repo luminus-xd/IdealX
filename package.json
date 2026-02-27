@@ -1,0 +1,27 @@
+{
+  "name": "ideal-x",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "register": "tsx src/register-commands.ts"
+  },
+  "dependencies": {
+    "chat": "4.15.0",
+    "@chat-adapter/discord": "4.15.0",
+    "@chat-adapter/state-memory": "4.15.0",
+    "ai": "^6.0.0",
+    "@ai-sdk/anthropic": "3.0.48",
+    "hono": "^4.6.0",
+    "@hono/node-server": "1.19.1",
+    "dotenv": "17.3.1"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "tsx": "4.21.0",
+    "@types/node": "^22.0.0"
+  }
+}

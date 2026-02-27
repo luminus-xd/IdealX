@@ -1,3 +1,9 @@
+node_modules/
+dist/
+.env
+*.log
+
+# Legacy Rust
 /target
 .shuttle-storage
 Secrets*.toml
