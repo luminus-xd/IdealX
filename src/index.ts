@@ -30,7 +30,7 @@ app.get("/api/webhooks/discord", (c) =>
  * Webhook エンドポイントに転送する。
  */
 async function startGatewayListener() {
-  const discordAdapter = bot.adapters.discord;
+  const discordAdapter = bot.getAdapter("discord");
 
   if (!discordAdapter || !("startGatewayListener" in discordAdapter)) {
     console.warn(

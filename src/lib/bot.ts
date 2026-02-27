@@ -1,4 +1,4 @@
-import { Chat } from "chat";
+import { Chat, Card, CardText, Fields, Field, Divider, Section } from "chat";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import { buildAdapters } from "./adapters.js";
 import {
@@ -49,11 +49,24 @@ function isTargetForum(threadId: unknown): boolean {
   );
 }
 
+/** async iterable から指定件数のメッセージを取得する */
+async function collectMessages<T>(
+  iterable: AsyncIterable<T>,
+  limit: number,
+): Promise<T[]> {
+  const result: T[] = [];
+  for await (const item of iterable) {
+    result.push(item);
+    if (result.length >= limit) break;
+  }
+  return result;
+}
+
 /** Chat SDK の Message 配列を ConversationMessage 形式に変換する */
 function toConversationMessages(
   messages: Array<{
     text?: string;
-    author?: { isMe?: boolean; isBot?: boolean };
+    author?: { isMe?: boolean; isBot?: boolean | "unknown" };
   }>,
 ): ConversationMessage[] {
   return messages
@@ -138,8 +151,8 @@ async function fetchUrlContent(url: string): Promise<string | null> {
 // ボットがメンションされたとき（未購読スレッド）にClaude AIで応答する
 bot.onNewMention(async (thread) => {
   try {
-    const messages = await thread.fetchMessages({ limit: 5 });
-    const messageArray = Array.isArray(messages) ? messages : [];
+    await thread.refresh();
+    const messageArray = thread.recentMessages.slice(-5);
 
     const conversationMessages = toConversationMessages(messageArray);
     if (conversationMessages.length === 0) {
@@ -167,8 +180,9 @@ bot.onSubscribedMessage(async (thread, message) => {
     const isForum = isTargetForum(thread.id);
     const limit = isForum ? 100 : 5;
 
-    const messages = await thread.fetchMessages({ limit });
-    const messageArray = Array.isArray(messages) ? messages : [];
+    const messageArray = isForum
+      ? await collectMessages(thread.messages, limit)
+      : (await thread.refresh(), thread.recentMessages.slice(-limit));
 
     // /clear によるリセット時刻を考慮
     const resetTime = resetTimes.get(JSON.stringify(thread.id));
@@ -197,8 +211,7 @@ bot.onNewMessage(/[\s\S]*/, async (thread, message) => {
   try {
     await thread.subscribe();
 
-    const messages = await thread.fetchMessages({ limit: 100 });
-    const messageArray = Array.isArray(messages) ? messages : [];
+    const messageArray = await collectMessages(thread.messages, 100);
 
     const conversationMessages = toConversationMessages(messageArray);
     if (conversationMessages.length === 0) return;
@@ -220,11 +233,11 @@ bot.onNewMessage(/ぬるぽ/, async (thread) => {
 });
 
 // --- 📝 リアクション要約 ---
-bot.onReaction(["📝"], async (thread, reaction) => {
+bot.onReaction(["📝"], async (event) => {
   try {
     // リアクションされたメッセージを取得する
-    const messages = await thread.fetchMessages({ limit: 10 });
-    const messageArray = Array.isArray(messages) ? messages : [];
+    await event.thread.refresh();
+    const messageArray = event.thread.recentMessages.slice(-10);
 
     if (messageArray.length === 0) return;
 
@@ -240,7 +253,7 @@ bot.onReaction(["📝"], async (thread, reaction) => {
 
     // URL コンテンツを並列取得
     const urlContents: { url: string; content: string }[] = [];
-    const fetchPromises = urls.map(async (url) => {
+    const fetchPromises = urls.map(async (url: string) => {
       const content = await fetchUrlContent(url);
       if (content) {
         urlContents.push({ url, content });
@@ -250,75 +263,101 @@ bot.onReaction(["📝"], async (thread, reaction) => {
 
     const summary = await generateUrlSummary(text, urlContents);
 
-    await thread.post(`📝 **要約**\n\n${summary}`);
+    await event.thread.post(
+      Card({
+        title: "要約",
+        children: [CardText(summary)],
+      }),
+    );
   } catch (error) {
     console.error("Error in reaction handler:", error);
-    await thread.post("要約の生成中にエラーが発生しました。");
+    await event.thread.post("要約の生成中にエラーが発生しました。");
   }
 });
 
 // ========== スラッシュコマンド ==========
 
 // /help - コマンド一覧を表示
-bot.onSlashCommand("help", async (thread) => {
-  await thread.post(
-    [
-      "**IdealX ヘルプ**",
-      "",
-      "💬 **メンション機能**",
-      "IdealXにメンションすると、Claude AIが直近の会話を読み取り回答します。",
-      "",
-      "📋 **スラッシュコマンド**",
-      "`/help` - このヘルプを表示",
-      "`/age [ユーザー]` - Discordアカウント作成日と経過日数を表示",
-      "`/summarize [件数]` - 直近メッセージをAI要約（デフォルト10件、最大50件）",
-      "`/translate [言語] [テキスト]` - テキストを指定言語に翻訳",
-      "`/clear` - 会話コンテキストをリセット",
-      "",
-      "⚡ **リアクション機能**",
-      "📝リアクションでメッセージを要約してチャンネルに投稿",
-      "",
-      "_Powered by Claude claude-sonnet-4-6_",
-    ].join("\n"),
+bot.onSlashCommand("help", async (event) => {
+  await event.channel.post(
+    Card({
+      title: "IdealX ヘルプ",
+      children: [
+        Section([
+          CardText("💬 **メンション機能**"),
+          CardText("IdealXにメンションすると、Claude AIが直近の会話を読み取り回答します。"),
+        ]),
+        Divider(),
+        Section([
+          CardText("📋 **スラッシュコマンド**"),
+          CardText(
+            [
+              "`/help` - このヘルプを表示",
+              "`/age [ユーザー]` - Discordアカウント作成日と経過日数を表示",
+              "`/summarize [件数]` - 直近メッセージをAI要約（デフォルト10件、最大50件）",
+              "`/translate [言語] [テキスト]` - テキストを指定言語に翻訳",
+              "`/clear` - 会話コンテキストをリセット",
+            ].join("\n"),
+          ),
+        ]),
+        Divider(),
+        Section([
+          CardText("⚡ **リアクション機能**"),
+          CardText("📝リアクションでメッセージを要約してチャンネルに投稿"),
+        ]),
+        CardText("Powered by Claude claude-sonnet-4-6", { style: "muted" }),
+      ],
+    }),
   );
 });
 
 // /clear - 会話コンテキストをリセット
-bot.onSlashCommand("clear", async (thread) => {
-  resetTimes.set(JSON.stringify(thread.id), new Date());
-  await thread.post(
-    "会話コンテキストをリセットしました。これ以降のメッセージのみがAIへの入力として使用されます。",
+bot.onSlashCommand("clear", async (event) => {
+  resetTimes.set(JSON.stringify(event.channel.id), new Date());
+  await event.channel.post(
+    Card({
+      title: "コンテキストリセット",
+      children: [
+        CardText("会話コンテキストをリセットしました。これ以降のメッセージのみがAIへの入力として使用されます。"),
+      ],
+    }),
   );
 });
 
 // /summarize [count] - 直近メッセージを要約
-bot.onSlashCommand("summarize", async (thread, command) => {
+bot.onSlashCommand("summarize", async (event) => {
   try {
-    // コマンドオプションから件数を取得（デフォルト10、最大50）
-    const rawCount =
-      (command as { options?: Record<string, unknown> })?.options?.count;
-    const count = Math.min(Math.max(Number(rawCount) || 10, 1), 50);
+    // コマンドテキストから件数を取得（デフォルト10、最大50）
+    const rawCount = Number(event.text) || 10;
+    const count = Math.min(Math.max(rawCount, 1), 50);
 
-    const messages = await thread.fetchMessages({ limit: count });
-    const messageArray = (Array.isArray(messages) ? messages : []).filter(
-      (m: { author?: { isBot?: boolean; isMe?: boolean } }) =>
-        !m.author?.isBot && !m.author?.isMe,
+    // Channel の messages async iterable から指定件数を取得
+    const allMessages = await collectMessages(event.channel.messages, count);
+    const messageArray = allMessages.filter(
+      (m) => !m.author?.isBot && !m.author?.isMe,
     );
 
     const conversationMessages = toConversationMessages(messageArray);
 
     if (conversationMessages.length === 0) {
-      await thread.post("要約するメッセージが見つかりませんでした。");
+      await event.channel.post("要約するメッセージが見つかりませんでした。");
       return;
     }
 
     const summary = await generateSummary(conversationMessages);
-    await thread.post(
-      `📝 **会話の要約**\n\n${summary}\n\n_${conversationMessages.length}件のメッセージを要約_`,
+    await event.channel.post(
+      Card({
+        title: "会話の要約",
+        children: [
+          CardText(summary),
+          Divider(),
+          CardText(`${conversationMessages.length}件のメッセージを要約`, { style: "muted" }),
+        ],
+      }),
     );
   } catch (error) {
     console.error("Error in summarize command:", error);
-    await thread.post("要約の生成中にエラーが発生しました。");
+    await event.channel.post("要約の生成中にエラーが発生しました。");
   }
 });
 
@@ -338,14 +377,15 @@ const LANGUAGES: Record<string, string> = {
   arabic: "アラビア語",
 };
 
-bot.onSlashCommand("translate", async (thread, command) => {
+bot.onSlashCommand("translate", async (event) => {
   try {
-    const options = (command as { options?: Record<string, unknown> })?.options;
-    const languageKey = String(options?.language || "").toLowerCase();
-    const text = String(options?.text || "");
+    // event.text から "language text" 形式でパース
+    const parts = event.text.trim().split(/\s+/);
+    const languageKey = (parts[0] || "").toLowerCase();
+    const text = parts.slice(1).join(" ");
 
     if (!text) {
-      await thread.post("翻訳するテキストを入力してください。");
+      await event.channel.post("翻訳するテキストを入力してください。");
       return;
     }
 
@@ -353,23 +393,30 @@ bot.onSlashCommand("translate", async (thread, command) => {
     const translation = await generateTranslation(text, language);
 
     const displayOriginal = text.length > 500 ? text.slice(0, 500) + "…" : text;
-    await thread.post(
-      `🌐 **${language}への翻訳**\n\n**原文:** ${displayOriginal}\n**翻訳:** ${translation}`,
+    await event.channel.post(
+      Card({
+        title: `${language}への翻訳`,
+        children: [
+          Fields([
+            Field({ label: "原文", value: displayOriginal }),
+            Field({ label: "翻訳", value: translation }),
+          ]),
+        ],
+      }),
     );
   } catch (error) {
     console.error("Error in translate command:", error);
-    await thread.post("翻訳中にエラーが発生しました。");
+    await event.channel.post("翻訳中にエラーが発生しました。");
   }
 });
 
 // /age [user] - アカウント作成日と経過日数
-bot.onSlashCommand("age", async (thread, command) => {
+bot.onSlashCommand("age", async (event) => {
   try {
-    const options = (command as { options?: Record<string, unknown> })?.options;
-    const userId = String(options?.user || "");
+    const userId = event.text.trim();
 
     if (!userId) {
-      await thread.post("ユーザーを指定してください。");
+      await event.channel.post("ユーザーを指定してください。");
       return;
     }
 
@@ -385,16 +432,20 @@ bot.onSlashCommand("age", async (thread, command) => {
     const years = Math.floor(totalDays / 365);
     const remainingDays = totalDays % 365;
 
-    await thread.post(
-      [
-        `🎂 **<@${userId}> のアカウント情報**`,
-        "",
-        `📅 **作成日:** <t:${Math.floor(createdAt.getTime() / 1000)}:R>`,
-        `⏳ **経過日数:** ${totalDays}日（${years}年${remainingDays}日）`,
-      ].join("\n"),
+    await event.channel.post(
+      Card({
+        title: "アカウント情報",
+        children: [
+          CardText(`<@${userId}>`),
+          Fields([
+            Field({ label: "作成日", value: `<t:${Math.floor(createdAt.getTime() / 1000)}:R>` }),
+            Field({ label: "経過日数", value: `${totalDays}日（${years}年${remainingDays}日）` }),
+          ]),
+        ],
+      }),
     );
   } catch (error) {
     console.error("Error in age command:", error);
-    await thread.post("アカウント情報の取得中にエラーが発生しました。");
+    await event.channel.post("アカウント情報の取得中にエラーが発生しました。");
   }
 });

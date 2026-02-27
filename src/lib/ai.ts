@@ -1,4 +1,4 @@
-import { generateText } from "ai";
+import { generateText, stepCountIs } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -44,8 +44,8 @@ export async function generateAIResponse(
     system,
     messages,
     tools: { web_search: webSearchTool },
-    maxSteps: 6,
-    maxTokens: 4096,
+    stopWhen: stepCountIs(6),
+    maxOutputTokens: 4096,
   });
 
   return result.text;
@@ -69,7 +69,7 @@ export async function generateSummary(
     system:
       "以下の会話を簡潔に要約してください。要約のみを出力してください。",
     messages: [{ role: "user", content: prompt }],
-    maxTokens: 4096,
+    maxOutputTokens: 4096,
   });
 
   return result.text;
@@ -86,7 +86,7 @@ export async function generateTranslation(
     model,
     system: `以下のテキストを${language}に翻訳してください。翻訳文のみを出力してください。`,
     messages: [{ role: "user", content: text }],
-    maxTokens: 4096,
+    maxOutputTokens: 4096,
   });
 
   return result.text;
@@ -110,7 +110,7 @@ export async function generateUrlSummary(
     system:
       "メッセージの内容とURLの情報を簡潔にまとめてください。要約のみを出力してください。",
     messages: [{ role: "user", content: prompt }],
-    maxTokens: 4096,
+    maxOutputTokens: 4096,
   });
 
   return result.text;
