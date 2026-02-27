@@ -1,4 +1,4 @@
-import { generateText, stepCountIs } from "ai";
+import { generateText, streamText, stepCountIs } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -49,6 +49,35 @@ export async function generateAIResponse(
   });
 
   return result.text;
+}
+
+/**
+ * Claude AI でレスポンスをストリーミング生成する（web検索なし）
+ */
+export function streamAIResponse(
+  messages: ConversationMessage[],
+  options?: {
+    forumTitle?: string;
+    forumDescription?: string;
+  },
+): AsyncIterable<string> {
+  let system = systemPrompt;
+
+  if (options?.forumTitle || options?.forumDescription) {
+    system += "\n\n--- フォーラム情報 ---";
+    if (options.forumTitle) system += `\nタイトル: ${options.forumTitle}`;
+    if (options.forumDescription)
+      system += `\n説明: ${options.forumDescription}`;
+  }
+
+  const result = streamText({
+    model,
+    system,
+    messages,
+    maxOutputTokens: 4096,
+  });
+
+  return result.textStream;
 }
 
 /**
