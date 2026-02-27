@@ -2,7 +2,7 @@ import { Chat, Card, CardText, Fields, Field, Divider, Section } from "chat";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import { buildAdapters } from "./adapters.js";
 import {
-  generateAIResponse,
+  streamAIResponse,
   generateSummary,
   generateTranslation,
   generateUrlSummary,
@@ -78,42 +78,6 @@ function toConversationMessages(
     .filter((m) => m.content.length > 0);
 }
 
-/** Discord の 2000 文字制限対応でメッセージを分割する */
-function splitMessage(text: string, maxLength: number = 1950): string[] {
-  if (text.length <= maxLength) return [text];
-
-  const parts: string[] = [];
-  let remaining = text;
-
-  while (remaining.length > 0) {
-    if (remaining.length <= maxLength) {
-      parts.push(remaining);
-      break;
-    }
-
-    // 文の区切りで分割を試みる
-    let splitIndex = -1;
-    const delimiters = ["\n\n", "\n", "。", ". ", "! ", "? "];
-
-    for (const delimiter of delimiters) {
-      const lastIndex = remaining.lastIndexOf(delimiter, maxLength);
-      if (lastIndex > maxLength * 0.3) {
-        splitIndex = lastIndex + delimiter.length;
-        break;
-      }
-    }
-
-    if (splitIndex === -1) {
-      splitIndex = maxLength;
-    }
-
-    parts.push(remaining.slice(0, splitIndex));
-    remaining = remaining.slice(splitIndex);
-  }
-
-  return parts;
-}
-
 /** URL からテキストコンテンツを取得する */
 async function fetchUrlContent(url: string): Promise<string | null> {
   try {
@@ -160,11 +124,7 @@ bot.onNewMention(async (thread) => {
       return;
     }
 
-    const response = await generateAIResponse(conversationMessages);
-
-    for (const part of splitMessage(response)) {
-      await thread.post(part);
-    }
+    await thread.post(streamAIResponse(conversationMessages));
   } catch (error) {
     console.error("Error in onNewMention:", error);
     await thread.post("申し訳ありません。エラーが発生しました。");
@@ -190,11 +150,7 @@ bot.onSubscribedMessage(async (thread, message) => {
 
     if (conversationMessages.length === 0) return;
 
-    const response = await generateAIResponse(conversationMessages);
-
-    for (const part of splitMessage(response)) {
-      await thread.post(part);
-    }
+    await thread.post(streamAIResponse(conversationMessages));
   } catch (error) {
     console.error("Error in onSubscribedMessage:", error);
     await thread.post("申し訳ありません。エラーが発生しました。");
@@ -216,11 +172,7 @@ bot.onNewMessage(/[\s\S]*/, async (thread, message) => {
     const conversationMessages = toConversationMessages(messageArray);
     if (conversationMessages.length === 0) return;
 
-    const response = await generateAIResponse(conversationMessages);
-
-    for (const part of splitMessage(response)) {
-      await thread.post(part);
-    }
+    await thread.post(streamAIResponse(conversationMessages));
   } catch (error) {
     console.error("Error in forum auto-response:", error);
     await thread.post("申し訳ありません。エラーが発生しました。");
