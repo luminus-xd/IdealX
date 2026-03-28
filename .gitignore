@@ -1,4 +1,18 @@
+# Rust
 /target
+
+# Shuttle
 .shuttle-storage
-Secrets*.toml
 .shuttle/
+Secrets*.toml
+
+# Environment
+.env
+.env.*
+
+# Node.js (legacy)
+node_modules/
+dist/
+
+# IDE / Tools
+.claude/
