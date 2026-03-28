@@ -1,4 +1,4 @@
-use crate::{claude::RequestMessage, Data};
+use crate::{claude::{MessageContent, RequestMessage}, Data};
 use poise::serenity_prelude::CreateEmbed;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -67,7 +67,7 @@ pub async fn translate(
     );
     let request_messages = vec![RequestMessage {
         role: "user",
-        content: prompt,
+        content: MessageContent::Text(prompt),
     }];
 
     // Embedフィールドの制限（1024文字）に合わせて原文を切り詰める

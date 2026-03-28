@@ -1,4 +1,3 @@
-use serde::Serialize;
 use tracing::{error, info};
 
 #[derive(Debug)]
@@ -26,10 +25,70 @@ impl std::fmt::Display for ClaudeError {
 
 impl std::error::Error for ClaudeError {}
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Clone, Debug)]
+pub enum ContentBlock {
+    Text(String),
+    ImageUrl(String),
+}
+
+impl ContentBlock {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            ContentBlock::Text(text) => serde_json::json!({
+                "type": "text",
+                "text": text
+            }),
+            ContentBlock::ImageUrl(url) => serde_json::json!({
+                "type": "image",
+                "source": {
+                    "type": "url",
+                    "url": url
+                }
+            }),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum MessageContent {
+    Text(String),
+    Blocks(Vec<ContentBlock>),
+}
+
+impl MessageContent {
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            MessageContent::Text(s) => serde_json::Value::String(s.clone()),
+            MessageContent::Blocks(blocks) => {
+                serde_json::Value::Array(blocks.iter().map(|b| b.to_json()).collect())
+            }
+        }
+    }
+
+    pub fn append_text(&mut self, extra: &str) {
+        match self {
+            MessageContent::Text(s) => {
+                s.push_str("\n\n");
+                s.push_str(extra);
+            }
+            MessageContent::Blocks(blocks) => {
+                // 最後のテキストブロックに追記、なければ新規追加
+                if let Some(ContentBlock::Text(last)) = blocks.last_mut() {
+                    last.push_str("\n\n");
+                    last.push_str(extra);
+                } else {
+                    blocks.push(ContentBlock::Text(extra.to_string()));
+                }
+            }
+        }
+    }
+
+}
+
+#[derive(Clone, Debug)]
 pub struct RequestMessage<'a> {
     pub role: &'a str,
-    pub content: String,
+    pub content: MessageContent,
 }
 
 /// Claudeにリクエストを送信、レスポンスを取得（ウェブ検索ツール付き）
@@ -50,7 +109,7 @@ pub async fn get_claude_response(
         .map(|m| {
             serde_json::json!({
                 "role": m.role,
-                "content": m.content
+                "content": m.content.to_json()
             })
         })
         .collect();

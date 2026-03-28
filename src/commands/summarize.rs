@@ -1,4 +1,4 @@
-use crate::{claude::RequestMessage, Data};
+use crate::{claude::{MessageContent, RequestMessage}, Data};
 use poise::serenity_prelude::{self as serenity, CreateEmbed};
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -37,7 +37,7 @@ pub async fn summarize(
     let prompt = format!("以下の会話を簡潔に要約してください:\n\n{}", formatted);
     let request_messages = vec![RequestMessage {
         role: "user",
-        content: prompt,
+        content: MessageContent::Text(prompt),
     }];
 
     match crate::claude::get_claude_response(

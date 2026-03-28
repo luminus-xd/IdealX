@@ -8,7 +8,7 @@ mod commands {
     pub mod translate;
 }
 
-use claude::{get_claude_response, split_message, RequestMessage};
+use claude::{get_claude_response, split_message, ContentBlock, MessageContent, RequestMessage};
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -56,6 +56,15 @@ struct Bot {
     target_server_ids: Arc<Vec<u64>>,
     target_forum_channel_ids: Arc<Vec<u64>>,
     reset_times: ResetTimes,
+}
+
+/// 添付ファイルが画像かどうかを判定する関数
+fn is_image_attachment(attachment: &serenity::model::channel::Attachment) -> bool {
+    attachment
+        .content_type
+        .as_ref()
+        .map(|ct| ct.starts_with("image/"))
+        .unwrap_or_else(|| attachment.height.is_some())
 }
 
 /// ユーザーかどうかを判定する関数
@@ -129,17 +138,22 @@ fn escape_xml(s: &str) -> String {
 
 /// メッセージをXML構造化されたAPIリクエスト形式に変換する関数
 fn build_xml_messages(messages: Vec<Message>) -> Vec<RequestMessage<'static>> {
-    // 時系列順に変換し、空メッセージを除外
-    let parsed: Vec<(bool, String, String, String)> = messages
+    let reversed: Vec<&Message> = messages.iter().rev().collect();
+
+    // 時系列順に変換し、空メッセージを除外（画像のみのメッセージは保持）
+    // orig_idx で元メッセージへの参照を保持し、画像URLは最後のユーザーメッセージでのみ収集する
+    let parsed: Vec<(usize, bool, String, String, String)> = reversed
         .iter()
-        .rev()
-        .filter_map(|message| {
+        .enumerate()
+        .filter_map(|(orig_idx, message)| {
             let content = MENTION_RE
                 .replace_all(&message.content, "")
                 .trim()
                 .to_string();
 
-            if content.is_empty() {
+            let has_images = message.attachments.iter().any(is_image_attachment);
+
+            if content.is_empty() && !has_images {
                 info!("Skipping empty message from user: {}", message.author.name);
                 return None;
             }
@@ -147,14 +161,14 @@ fn build_xml_messages(messages: Vec<Message>) -> Vec<RequestMessage<'static>> {
             let is_user_msg = is_user(&message.author);
             let author_name = message.author.name.clone();
             let timestamp = message.timestamp.to_string();
-            Some((is_user_msg, author_name, timestamp, content))
+            Some((orig_idx, is_user_msg, author_name, timestamp, content))
         })
         .collect();
 
     // 最後のユーザーメッセージのインデックスを見つける
     let last_user_idx = parsed
         .iter()
-        .rposition(|(is_user_msg, _, _, _)| *is_user_msg);
+        .rposition(|(_, is_user_msg, _, _, _)| *is_user_msg);
 
     if last_user_idx.is_none() {
         return Vec::new();
@@ -163,7 +177,7 @@ fn build_xml_messages(messages: Vec<Message>) -> Vec<RequestMessage<'static>> {
     parsed
         .into_iter()
         .enumerate()
-        .map(|(i, (is_user_msg, author_name, timestamp, content))| {
+        .map(|(i, (orig_idx, is_user_msg, author_name, timestamp, content))| {
             if is_user_msg {
                 if Some(i) == last_user_idx {
                     // 最後のユーザーメッセージ
@@ -172,12 +186,34 @@ fn build_xml_messages(messages: Vec<Message>) -> Vec<RequestMessage<'static>> {
                         escape_xml(&author_name),
                         escape_xml(&content)
                     );
-                    RequestMessage {
-                        role: "user",
-                        content: xml_content,
+
+                    // 画像URLは最後のユーザーメッセージでのみ収集（最大5枚）
+                    let image_urls: Vec<String> = reversed[orig_idx]
+                        .attachments
+                        .iter()
+                        .filter(|a| is_image_attachment(a))
+                        .take(5)
+                        .map(|a| a.url.clone())
+                        .collect();
+
+                    if image_urls.is_empty() {
+                        RequestMessage {
+                            role: "user",
+                            content: MessageContent::Text(xml_content),
+                        }
+                    } else {
+                        let mut blocks: Vec<ContentBlock> = image_urls
+                            .into_iter()
+                            .map(ContentBlock::ImageUrl)
+                            .collect();
+                        blocks.push(ContentBlock::Text(xml_content));
+                        RequestMessage {
+                            role: "user",
+                            content: MessageContent::Blocks(blocks),
+                        }
                     }
                 } else {
-                    // 履歴のユーザーメッセージ
+                    // 履歴のユーザーメッセージ（画像は含めない）
                     let xml_content = format!(
                         "<context>\n<message author=\"{}\" ts=\"{}\">\n{}\n</message>\n</context>",
                         escape_xml(&author_name),
@@ -186,14 +222,13 @@ fn build_xml_messages(messages: Vec<Message>) -> Vec<RequestMessage<'static>> {
                     );
                     RequestMessage {
                         role: "user",
-                        content: xml_content,
+                        content: MessageContent::Text(xml_content),
                     }
                 }
             } else {
-                // アシスタントメッセージもエスケープ（コードブロック等を含む場合のXML構造保護）
                 RequestMessage {
                     role: "assistant",
-                    content: escape_xml(&content),
+                    content: MessageContent::Text(escape_xml(&content)),
                 }
             }
         })
@@ -209,9 +244,24 @@ fn ensure_alternating_roles(
     for msg in messages {
         if let Some(last) = result.last_mut() {
             if last.role == msg.role {
-                last.content.push_str("\n\n");
-                last.content.push_str(&msg.content);
-                continue;
+                match msg.content {
+                    MessageContent::Text(ref extra) => {
+                        last.content.append_text(extra);
+                        continue;
+                    }
+                    MessageContent::Blocks(ref blocks) => {
+                        // Blocks型: 前のメッセージのテキストをBlocksの先頭に統合
+                        let prev_content =
+                            std::mem::replace(&mut last.content, MessageContent::Text(String::new()));
+                        let mut merged_blocks = Vec::new();
+                        if let MessageContent::Text(prev_text) = prev_content {
+                            merged_blocks.push(ContentBlock::Text(prev_text));
+                        }
+                        merged_blocks.extend(blocks.iter().cloned());
+                        last.content = MessageContent::Blocks(merged_blocks);
+                        continue;
+                    }
+                }
             }
         }
         result.push(msg);
@@ -380,14 +430,14 @@ impl Bot {
                 0,
                 RequestMessage {
                     role: "assistant",
-                    content: "コンテキストを確認しました。".to_string(),
+                    content: MessageContent::Text("コンテキストを確認しました。".to_string()),
                 },
             );
             request_body.insert(
                 0,
                 RequestMessage {
                     role: "user",
-                    content: forum_context,
+                    content: MessageContent::Text(forum_context),
                 },
             );
         }
@@ -409,7 +459,7 @@ impl Bot {
             info!("No valid user message found, adding default message");
             request_body.push(RequestMessage {
                 role: "user",
-                content: "こんにちは".to_string(),
+                content: MessageContent::Text("こんにちは".to_string()),
             });
         }
 
@@ -588,7 +638,7 @@ impl EventHandler for Bot {
 
         let request_messages = vec![RequestMessage {
             role: "user",
-            content: prompt,
+            content: MessageContent::Text(prompt),
         }];
 
         let _typing = add_reaction.channel_id.start_typing(&ctx.http);
