@@ -1,6 +1,6 @@
 use crate::Data;
 use chrono::Utc;
-use poise::serenity_prelude::{CreateEmbed};
+use poise::serenity_prelude::CreateEmbed;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;

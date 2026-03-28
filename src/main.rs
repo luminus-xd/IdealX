@@ -11,6 +11,15 @@ mod commands {
 use claude::{get_claude_response, split_message, RequestMessage};
 use regex::Regex;
 use std::collections::HashMap;
+use std::sync::LazyLock;
+
+/// 静的にコンパイルされた正規表現（毎回のコンパイルを回避）
+static MENTION_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<@(\d+)>").unwrap());
+static SCRIPT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)<(script|style)[^>]*>.*?</(script|style)>").unwrap());
+static TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^>]+>").unwrap());
+static WS_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
+static URL_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"https?://[^\s<>"]+"#).unwrap());
 
 use poise::{serenity_prelude as serenity, serenity_prelude::ActivityData};
 
@@ -30,8 +39,7 @@ use tracing::{error, info};
 use tracing_subscriber;
 
 /// チャンネルごとの会話リセット時刻を管理する型
-pub type ResetTimes =
-    Arc<RwLock<HashMap<ChannelId, chrono::DateTime<chrono::Utc>>>>;
+pub type ResetTimes = Arc<RwLock<HashMap<ChannelId, chrono::DateTime<chrono::Utc>>>>;
 
 // Poiseフレームワークのデータ型
 #[derive(Clone)]
@@ -86,12 +94,10 @@ async fn fetch_url_content(client: &reqwest::Client, url: &str) -> Option<String
     let body = response.text().await.ok()?;
 
     // scriptとstyleタグを内容ごと削除
-    let script_re = Regex::new(r"(?s)<(script|style)[^>]*>.*?</(script|style)>").unwrap();
-    let body = script_re.replace_all(&body, "").to_string();
+    let body = SCRIPT_RE.replace_all(&body, "").to_string();
 
     // HTMLタグを除去
-    let tag_re = Regex::new(r"<[^>]+>").unwrap();
-    let text = tag_re.replace_all(&body, " ").to_string();
+    let text = TAG_RE.replace_all(&body, " ").to_string();
 
     // 主要なHTMLエンティティをデコード
     let text = text
@@ -102,8 +108,7 @@ async fn fetch_url_content(client: &reqwest::Client, url: &str) -> Option<String
         .replace("&nbsp;", " ");
 
     // 連続する空白・改行を整理
-    let ws_re = Regex::new(r"\s+").unwrap();
-    let text = ws_re.replace_all(&text, " ").trim().to_string();
+    let text = WS_RE.replace_all(&text, " ").trim().to_string();
 
     // 1URL あたり最大2000文字に制限
     let text: String = text.chars().take(2000).collect();
@@ -115,32 +120,104 @@ async fn fetch_url_content(client: &reqwest::Client, url: &str) -> Option<String
     }
 }
 
-/// メッセージをAPIリクエスト形式に変換する関数
-fn build_json(messages: Vec<Message>) -> Vec<RequestMessage<'static>> {
-    let mention_regexp = Regex::new(r"<@(\d+)>").unwrap();
-    messages
+/// XML構造を壊さないようにエスケープする関数
+fn escape_xml(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// メッセージをXML構造化されたAPIリクエスト形式に変換する関数
+fn build_xml_messages(messages: Vec<Message>) -> Vec<RequestMessage<'static>> {
+    // 時系列順に変換し、空メッセージを除外
+    let parsed: Vec<(bool, String, String, String)> = messages
         .iter()
         .rev()
         .filter_map(|message| {
-            let content = mention_regexp
+            let content = MENTION_RE
                 .replace_all(&message.content, "")
                 .trim()
                 .to_string();
 
-            // 空のコンテンツのメッセージは除外
             if content.is_empty() {
                 info!("Skipping empty message from user: {}", message.author.name);
                 return None;
             }
 
-            let role = if is_user(&message.author) {
-                "user"
+            let is_user_msg = is_user(&message.author);
+            let author_name = message.author.name.clone();
+            let timestamp = message.timestamp.to_string();
+            Some((is_user_msg, author_name, timestamp, content))
+        })
+        .collect();
+
+    // 最後のユーザーメッセージのインデックスを見つける
+    let last_user_idx = parsed
+        .iter()
+        .rposition(|(is_user_msg, _, _, _)| *is_user_msg);
+
+    if last_user_idx.is_none() {
+        return Vec::new();
+    }
+
+    parsed
+        .into_iter()
+        .enumerate()
+        .map(|(i, (is_user_msg, author_name, timestamp, content))| {
+            if is_user_msg {
+                if Some(i) == last_user_idx {
+                    // 最後のユーザーメッセージ
+                    let xml_content = format!(
+                        "<current_message>\n<author>{}</author>\n<text>{}</text>\n</current_message>",
+                        escape_xml(&author_name),
+                        escape_xml(&content)
+                    );
+                    RequestMessage {
+                        role: "user",
+                        content: xml_content,
+                    }
+                } else {
+                    // 履歴のユーザーメッセージ
+                    let xml_content = format!(
+                        "<context>\n<message author=\"{}\" ts=\"{}\">\n{}\n</message>\n</context>",
+                        escape_xml(&author_name),
+                        escape_xml(&timestamp),
+                        escape_xml(&content)
+                    );
+                    RequestMessage {
+                        role: "user",
+                        content: xml_content,
+                    }
+                }
             } else {
-                "assistant"
-            };
-            Some(RequestMessage { role, content })
+                // アシスタントメッセージもエスケープ（コードブロック等を含む場合のXML構造保護）
+                RequestMessage {
+                    role: "assistant",
+                    content: escape_xml(&content),
+                }
+            }
         })
         .collect()
+}
+
+/// 連続する同一ロールのメッセージを結合してロールが交互になるようにする関数
+fn ensure_alternating_roles(
+    messages: Vec<RequestMessage<'static>>,
+) -> Vec<RequestMessage<'static>> {
+    let mut result: Vec<RequestMessage<'static>> = Vec::new();
+
+    for msg in messages {
+        if let Some(last) = result.last_mut() {
+            if last.role == msg.role {
+                last.content.push_str("\n\n");
+                last.content.push_str(&msg.content);
+                continue;
+            }
+        }
+        result.push(msg);
+    }
+
+    result
 }
 
 // Bot構造体のメソッド実装
@@ -174,19 +251,17 @@ impl Bot {
 
         // フォーラム内のスレッドかどうかを確認
         match channel {
-            serenity::model::channel::Channel::Guild(guild_channel) => {
-                match guild_channel.kind {
-                    serenity::model::channel::ChannelType::PublicThread
-                    | serenity::model::channel::ChannelType::PrivateThread => {
-                        if let Some(parent_id) = guild_channel.parent_id {
-                            self.target_forum_channel_ids.contains(&parent_id.get())
-                        } else {
-                            false
-                        }
+            serenity::model::channel::Channel::Guild(guild_channel) => match guild_channel.kind {
+                serenity::model::channel::ChannelType::PublicThread
+                | serenity::model::channel::ChannelType::PrivateThread => {
+                    if let Some(parent_id) = guild_channel.parent_id {
+                        self.target_forum_channel_ids.contains(&parent_id.get())
+                    } else {
+                        false
                     }
-                    _ => false,
                 }
-            }
+                _ => false,
+            },
             _ => false,
         }
     }
@@ -206,32 +281,33 @@ impl Bot {
         };
 
         match channel {
-            serenity::model::channel::Channel::Guild(guild_channel) => {
-                match guild_channel.kind {
-                    serenity::model::channel::ChannelType::PublicThread
-                    | serenity::model::channel::ChannelType::PrivateThread => {
-                        let title = guild_channel.name;
+            serenity::model::channel::Channel::Guild(guild_channel) => match guild_channel.kind {
+                serenity::model::channel::ChannelType::PublicThread
+                | serenity::model::channel::ChannelType::PrivateThread => {
+                    let title = guild_channel.name;
 
-                        let builder = serenity::builder::GetMessages::new().limit(1);
-                        let messages = match msg.channel_id.messages(&ctx.http, builder).await {
-                            Ok(messages) => messages,
+                    // フォーラムスレッドではチャンネルIDと最初のメッセージのIDが一致する
+                    let first_message_id =
+                        serenity::model::id::MessageId::new(msg.channel_id.get());
+                    let description =
+                        match msg.channel_id.message(&ctx.http, first_message_id).await {
+                            Ok(first_msg) => {
+                                if first_msg.content.is_empty() {
+                                    None
+                                } else {
+                                    Some(first_msg.content)
+                                }
+                            }
                             Err(e) => {
                                 error!("Error fetching first message: {}", e);
-                                return (Some(title), None);
+                                None
                             }
                         };
 
-                        let description = if !messages.is_empty() {
-                            Some(messages.last().unwrap().content.clone())
-                        } else {
-                            None
-                        };
-
-                        (Some(title), description)
-                    }
-                    _ => (None, None),
+                    (Some(title), description)
                 }
-            }
+                _ => (None, None),
+            },
             _ => (None, None),
         }
     }
@@ -259,7 +335,7 @@ impl Bot {
         let limit = match channel {
             serenity::model::channel::Channel::Guild(guild_channel) => match guild_channel.kind {
                 serenity::model::channel::ChannelType::PublicThread
-                | serenity::model::channel::ChannelType::PrivateThread => 100,
+                | serenity::model::channel::ChannelType::PrivateThread => 30,
                 _ => 5,
             },
             _ => 5,
@@ -292,26 +368,45 @@ impl Bot {
         };
 
         // 通常のメッセージをリクエスト形式に変換
-        let mut request_body: Vec<RequestMessage> = build_json(filtered_messages);
+        let mut request_body: Vec<RequestMessage> = build_xml_messages(filtered_messages);
 
-        // タイトルとディスクリプションがある場合は、先頭に追加
+        // タイトルとディスクリプションがある場合は、XML形式で先頭に追加
         if let (Some(title_text), Some(desc_text)) = (title, description) {
-            let forum_info = format!(
-                "フォーラムタイトル: {}\nディスクリプション: {}",
-                title_text, desc_text
+            let forum_context = format!(
+                "<channel_context>\n<title>{}</title>\n<description>{}</description>\n</channel_context>",
+                escape_xml(title_text), escape_xml(desc_text)
+            );
+            request_body.insert(
+                0,
+                RequestMessage {
+                    role: "assistant",
+                    content: "コンテキストを確認しました。".to_string(),
+                },
             );
             request_body.insert(
                 0,
                 RequestMessage {
                     role: "user",
-                    content: forum_info,
+                    content: forum_context,
                 },
             );
         }
 
+        // ロールが交互になるように連続する同一ロールのメッセージを結合
+        request_body = ensure_alternating_roles(request_body);
+
+        // 先頭が assistant ロールの場合は除去（Claude APIは最初のメッセージがuserであることを要求）
+        if request_body
+            .first()
+            .map(|m| m.role == "assistant")
+            .unwrap_or(false)
+        {
+            request_body.remove(0);
+        }
+
         // メッセージが空の場合はデフォルトメッセージを追加
         if request_body.is_empty() {
-            info!("No valid messages found, adding default message");
+            info!("No valid user message found, adding default message");
             request_body.push(RequestMessage {
                 role: "user",
                 content: "こんにちは".to_string(),
@@ -367,9 +462,7 @@ impl Bot {
             )
         };
 
-        let embed = CreateEmbed::new()
-            .description(&embed_text)
-            .color(0x5865F2);
+        let embed = CreateEmbed::new().description(&embed_text).color(0x5865F2);
 
         let mut create_msg = CreateMessage::new().embed(embed);
         if is_inclued_bot_mention(ctx, msg) {
@@ -455,8 +548,7 @@ impl EventHandler for Bot {
         };
 
         // メッセージ内のURLを抽出（最大3件）
-        let url_re = Regex::new(r#"https?://[^\s<>"]+"#).unwrap();
-        let urls: Vec<&str> = url_re
+        let urls: Vec<&str> = URL_RE
             .find_iter(&message.content)
             .map(|m| m.as_str())
             .take(3)
@@ -628,8 +720,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(Vec::new())
     };
 
-    let target_forum_channel_ids = if let Ok(forum_ids_str) = env::var("TARGET_FORUM_CHANNEL_IDS")
-    {
+    let target_forum_channel_ids = if let Ok(forum_ids_str) = env::var("TARGET_FORUM_CHANNEL_IDS") {
         let forum_ids: Vec<u64> = forum_ids_str
             .split(',')
             .filter_map(|id| id.trim().parse().ok())
