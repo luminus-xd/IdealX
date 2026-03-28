@@ -1,22 +1,43 @@
+# Rustビルド用のステージ
 FROM rust:1.86-slim AS builder
 
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 
+# 依存関係のキャッシュを利用するために、Cargo.toml/Cargo.lockを先にコピー
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build --release && rm -rf src
 
-COPY src/ ./src/
-RUN touch src/main.rs && cargo build --release
-
-FROM debian:bookworm-slim
-
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-
-COPY --from=builder /app/target/release/ideal-x ./
+# include_str!マクロで参照されるファイルをコピー
 COPY system_prompt.md ./
 
-CMD ["./ideal-x"]
+# ダミーのmain.rsを作成して依存関係をビルド
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+RUN cargo build --release
+RUN rm src/main.rs
+
+# 実際のソースコードをコピー
+COPY src ./src
+
+# アプリケーションをビルド
+RUN cargo build --release
+
+# 実行用の軽量なイメージ
+FROM debian:bookworm-slim
+
+# SSL証明書とランタイム依存関係をインストール
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# ビルドしたバイナリをコピー
+COPY --from=builder /app/target/release/ideal-x /usr/local/bin/ideal-x
+
+# 実行権限を付与
+RUN chmod +x /usr/local/bin/ideal-x
+
+# ログレベルを設定
+ENV RUST_LOG=info
+
+# アプリケーションを実行
+CMD ["ideal-x"]
