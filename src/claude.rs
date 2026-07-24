@@ -82,7 +82,6 @@ impl MessageContent {
             }
         }
     }
-
 }
 
 #[derive(Clone, Debug)]
@@ -99,7 +98,7 @@ pub async fn get_claude_response(
     system_prompt: Option<&str>,       // システムプロンプト
 ) -> Result<String, ClaudeError> {
     const URL: &str = "https://api.anthropic.com/v1/messages";
-    const CLAUDE_MODEL: &str = "claude-sonnet-4-6";
+    const CLAUDE_MODEL: &str = "claude-sonnet-5";
     const MAX_TOKENS: u32 = 4096;
     const MAX_ITERATIONS: u8 = 6;
 
