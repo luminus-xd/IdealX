@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src https://cdn.discordapp.com; connect-src 'self' ws: wss:; base-uri 'none'; form-action 'none'"
+    >
+    <title>IdealX Overlay</title>
+    <link rel="stylesheet" href="/assets/overlay.css">
+    <script src="/assets/overlay.js" defer></script>
+  </head>
+  <body>
+    <main id="overlay" class="overlay is-transparent" data-theme="dark" aria-live="polite" aria-atomic="false">
+      <ol id="comments" class="comments" aria-label="配信コメント"></ol>
+    </main>
+
+    <template id="comment-template">
+      <li class="comment">
+        <div class="comment__avatar" aria-hidden="true">
+          <span class="comment__avatar-fallback"></span>
+        </div>
+        <div class="comment__content">
+          <p class="comment__author"></p>
+          <p class="comment__body"></p>
+        </div>
+      </li>
+    </template>
+  </body>
+</html>

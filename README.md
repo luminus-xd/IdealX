@@ -23,9 +23,22 @@ Anthropic Claude APIと連携して、メンションや特定のフォーラム
 | `/summarize [件数]` | 直近のメッセージをAIで要約（デフォルト10件、最大50件） |
 | `/translate [言語] [テキスト]` | テキストを指定言語に翻訳 |
 | `/clear` | チャンネルの会話コンテキストをリセット |
+| `/overlay start` | このチャンネルで配信コメント表示を開始 |
+| `/overlay status` | セッション状態を確認 |
+| `/overlay pause` / `resume` | 表示を一時停止・再開 |
+| `/overlay clear` | 表示中コメントを全消去 |
+| `/overlay test` | OBSへテストコメントを表示 |
+| `/overlay rotate` | OBS表示URLをローテーション |
+| `/overlay end` | セッションを終了してURLを失効 |
 
 **その他**
 - `ぬるぽ` → `ガッ`
+
+**OBSコメントオーバーレイ**
+- 指定したDiscordテキストチャンネルの新着コメントをOBS Browser Sourceへリアルタイム表示
+- 最大3件、10 / 20 / 30 / 60秒表示、Dark / Light / Compactテーマ
+- Bot・Webhook・添付のみ投稿を除外し、URL・制御文字・Bidi文字を安全化
+- 編集・削除・一括削除、WebSocket再接続、URLローテーションに対応
 
 ## 必要なもの
 
@@ -45,6 +58,14 @@ export DISCORD_TOKEN="your_discord_token"
 export CLAUDE_TOKEN="your_claude_token"
 export TARGET_SERVER_IDS="server_id1,server_id2"        # 自動応答を有効にするサーバーID
 export TARGET_FORUM_CHANNEL_IDS="channel_id1,channel_id2"  # 自動応答を有効にするフォーラムチャンネルID
+
+# OBSコメントオーバーレイ（利用する場合）
+export OVERLAY_ENABLED="true"
+export OVERLAY_PUBLIC_BASE_URL="https://your-service.example.com"
+export OVERLAY_ALLOWED_OWNER_IDS="discord_user_id1,discord_user_id2"
+export OVERLAY_DEFAULT_DISPLAY_SECONDS="20"
+export OVERLAY_SESSION_TTL_MINUTES="480"
+export PORT="3000"
 cargo run
 ```
 
@@ -58,6 +79,11 @@ cargo run
    - `CLAUDE_TOKEN`
    - `TARGET_SERVER_IDS`（カンマ区切り）
    - `TARGET_FORUM_CHANNEL_IDS`（カンマ区切り）
+   - `OVERLAY_ENABLED=true`（オーバーレイを利用する場合）
+   - `OVERLAY_PUBLIC_BASE_URL`（RailwayのHTTPS公開オリジン）
+   - `OVERLAY_ALLOWED_OWNER_IDS`（操作を許可するDiscordユーザーID、カンマ区切り）
+   - `OVERLAY_DEFAULT_DISPLAY_SECONDS`（任意、10 / 20 / 30 / 60、既定20）
+   - `OVERLAY_SESSION_TTL_MINUTES`（任意、既定480）
 3. `git push` するだけで自動デプロイ
 
 > [!WARNING]

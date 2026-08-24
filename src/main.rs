@@ -1,9 +1,11 @@
 mod claude;
+mod overlay;
 
 mod commands {
     pub mod age;
     pub mod clear;
     pub mod help;
+    pub mod overlay;
     pub mod summarize;
     pub mod translate;
 }
@@ -12,6 +14,7 @@ use claude::{get_claude_response, split_message, ContentBlock, MessageContent, R
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::LazyLock;
+use std::time::Duration;
 
 /// 静的にコンパイルされた正規表現（毎回のコンパイルを回避）
 static MENTION_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<@(\d+)>").unwrap());
@@ -26,8 +29,9 @@ use poise::{serenity_prelude as serenity, serenity_prelude::ActivityData};
 use serenity::async_trait;
 use serenity::builder::{CreateEmbed, CreateEmbedFooter, CreateMessage};
 use serenity::model::channel::{Message, Reaction, ReactionType};
+use serenity::model::event::MessageUpdateEvent;
 use serenity::model::gateway::Ready;
-use serenity::model::id::{ChannelId, GuildId};
+use serenity::model::id::{ChannelId, GuildId, MessageId};
 use serenity::model::user::OnlineStatus;
 use serenity::model::user::User;
 use serenity::prelude::*;
@@ -35,8 +39,10 @@ use serenity::prelude::*;
 use std::env;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
-use tracing_subscriber;
+
+use overlay::{config::OverlayConfig, hub::OverlayHub, model::NewComment};
 
 /// チャンネルごとの会話リセット時刻を管理する型
 pub type ResetTimes = Arc<RwLock<HashMap<ChannelId, chrono::DateTime<chrono::Utc>>>>;
@@ -47,6 +53,8 @@ pub struct Data {
     pub claude_token: String,
     pub client: reqwest::Client,
     pub reset_times: ResetTimes,
+    pub overlay_hub: Arc<OverlayHub>,
+    pub overlay_config: Arc<OverlayConfig>,
 }
 
 #[derive(Clone)]
@@ -56,6 +64,7 @@ struct Bot {
     target_server_ids: Arc<Vec<u64>>,
     target_forum_channel_ids: Arc<Vec<u64>>,
     reset_times: ResetTimes,
+    overlay_hub: Arc<OverlayHub>,
 }
 
 /// 添付ファイルが画像かどうかを判定する関数
@@ -272,6 +281,44 @@ fn ensure_alternating_roles(
 
 // Bot構造体のメソッド実装
 impl Bot {
+    /// OBSオーバーレイ対象の通常メッセージを、AI処理とは独立してHubへ渡す。
+    async fn publish_overlay_message(&self, msg: &Message) {
+        let Some(guild_id) = msg.guild_id else {
+            return;
+        };
+        if msg.author.bot
+            || msg.webhook_id.is_some()
+            || !matches!(
+                msg.kind,
+                serenity::MessageType::Regular | serenity::MessageType::InlineReply
+            )
+            || msg.content.trim().is_empty()
+        {
+            return;
+        }
+
+        let author_name = msg
+            .member
+            .as_ref()
+            .and_then(|member| member.nick.clone())
+            .or_else(|| msg.author.global_name.clone())
+            .unwrap_or_else(|| msg.author.name.clone());
+
+        let _ = self
+            .overlay_hub
+            .add_comment(NewComment {
+                guild_id: guild_id.get(),
+                channel_id: msg.channel_id.get(),
+                discord_message_id: msg.id.get(),
+                author_user_id: msg.author.id.get(),
+                author_name,
+                avatar_url: Some(msg.author.static_face()),
+                body: msg.content.clone(),
+                created_at_unix_ms: Some(msg.timestamp.unix_timestamp().saturating_mul(1_000)),
+            })
+            .await;
+    }
+
     /// 特定のサーバーの特定のフォーラムチャンネルかどうかを判定するメソッド
     async fn should_auto_respond(&self, ctx: &Context, msg: &Message) -> bool {
         // サーバーIDが設定されていない場合は無効
@@ -539,6 +586,9 @@ impl Bot {
 #[async_trait]
 impl EventHandler for Bot {
     async fn message(&self, ctx: Context, msg: Message) {
+        // AI応答の外部API待ちより先にオーバーレイへ反映する。
+        self.publish_overlay_message(&msg).await;
+
         // ユーザーからのメッセージのみ処理
         if !is_user(&msg.author) {
             return;
@@ -566,6 +616,55 @@ impl EventHandler for Bot {
                 error!("Error sending message: {:?}", e);
             }
         }
+    }
+
+    async fn message_update(
+        &self,
+        _ctx: Context,
+        _old_if_available: Option<Message>,
+        new: Option<Message>,
+        event: MessageUpdateEvent,
+    ) {
+        let content = new
+            .as_ref()
+            .map(|message| message.content.as_str())
+            .or(event.content.as_deref());
+        if let Some(content) = content {
+            let _ = self
+                .overlay_hub
+                .update_comment(event.channel_id.get(), event.id.get(), content)
+                .await;
+        }
+    }
+
+    async fn message_delete(
+        &self,
+        _ctx: Context,
+        channel_id: ChannelId,
+        deleted_message_id: MessageId,
+        _guild_id: Option<GuildId>,
+    ) {
+        let _ = self
+            .overlay_hub
+            .remove_comment(channel_id.get(), deleted_message_id.get())
+            .await;
+    }
+
+    async fn message_delete_bulk(
+        &self,
+        _ctx: Context,
+        channel_id: ChannelId,
+        message_ids: Vec<MessageId>,
+        _guild_id: Option<GuildId>,
+    ) {
+        let message_ids = message_ids
+            .into_iter()
+            .map(MessageId::get)
+            .collect::<Vec<_>>();
+        let _ = self
+            .overlay_hub
+            .remove_comments(channel_id.get(), &message_ids)
+            .await;
     }
 
     /// 📝 リアクションが追加されたときにメッセージを要約する
@@ -609,12 +708,7 @@ impl EventHandler for Bot {
             return;
         }
 
-        let preview: String = message.content.chars().take(50).collect();
-        info!(
-            "📝 reaction received, summarizing message: {} (urls: {})",
-            preview,
-            urls.len()
-        );
+        info!("📝 reaction received (urls: {})", urls.len());
 
         // URLのコンテンツを並列取得
         let mut url_contents: Vec<String> = Vec::new();
@@ -690,6 +784,10 @@ impl EventHandler for Bot {
     /// Botが起動したときのイベントハンドラ
     async fn ready(&self, ctx: Context, ready: Ready) {
         info!("{} is connected!", ready.user.name);
+
+        // READYはRESUMEではなく新しいGatewayセッションを意味するため、
+        // イベント順序を保証できない既存表示を安全側へ倒して消去する。
+        self.overlay_hub.clear_for_sync_loss().await;
 
         let activity = ActivityData::playing("Good Night");
         let status = OnlineStatus::Idle;
@@ -786,11 +884,27 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(Vec::new())
     };
 
+    let overlay_config = Arc::new(OverlayConfig::from_env()?);
+    info!(
+        "Overlay feature is {}",
+        if overlay_config.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    let overlay_hub = Arc::new(OverlayHub::new(
+        Duration::from_secs(overlay_config.default_display_seconds),
+        Duration::from_secs(overlay_config.session_ttl_minutes.saturating_mul(60)),
+    ));
+
     // Bot と Poise Data で共有するリセット時刻マップ
     let reset_times: ResetTimes = Arc::new(RwLock::new(HashMap::new()));
 
     let claude_token_for_framework = claude_token.clone();
     let reset_times_for_framework = reset_times.clone();
+    let overlay_hub_for_framework = overlay_hub.clone();
+    let overlay_config_for_framework = overlay_config.clone();
 
     info!("Setting up Poise framework...");
     let framework = poise::Framework::builder()
@@ -801,6 +915,7 @@ async fn main() -> anyhow::Result<()> {
                 commands::summarize::summarize(),
                 commands::translate::translate(),
                 commands::clear::clear(),
+                commands::overlay::overlay(),
             ],
             ..Default::default()
         })
@@ -827,6 +942,8 @@ async fn main() -> anyhow::Result<()> {
                     claude_token: claude_token_for_framework,
                     client: reqwest::Client::new(),
                     reset_times: reset_times_for_framework,
+                    overlay_hub: overlay_hub_for_framework,
+                    overlay_config: overlay_config_for_framework,
                 })
             })
         })
@@ -846,6 +963,7 @@ async fn main() -> anyhow::Result<()> {
         target_server_ids,
         target_forum_channel_ids,
         reset_times,
+        overlay_hub: overlay_hub.clone(),
     };
 
     info!("Creating Discord client with bot handler and framework...");
@@ -866,6 +984,27 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Starting Discord client...");
 
+    let overlay_listener = if overlay_config.enabled {
+        Some(tokio::net::TcpListener::bind(overlay_config.listen_addr).await?)
+    } else {
+        None
+    };
+    let overlay_shutdown = CancellationToken::new();
+    let overlay_server_shutdown = overlay_shutdown.clone();
+    let overlay_server_hub = overlay_hub.clone();
+    let overlay_server = async move {
+        match overlay_listener {
+            Some(listener) => {
+                info!("Overlay HTTP/WSS server started");
+                overlay::http::serve(listener, overlay_server_hub, overlay_server_shutdown).await
+            }
+            None => std::future::pending::<anyhow::Result<()>>().await,
+        }
+    };
+    tokio::pin!(overlay_server);
+
+    let expiration_task = tokio::spawn(overlay_hub.clone().run_expiration_loop());
+
     let ctrl_c = async {
         tokio::signal::ctrl_c()
             .await
@@ -883,21 +1022,50 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
 
-    tokio::select! {
+    let mut overlay_server_finished = false;
+    let run_error = tokio::select! {
         result = client.start() => {
             if let Err(why) = result {
                 error!("Client error: {:?}", why);
-                info!("Waiting before exit due to client error...");
-                tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
-                return Err(anyhow::anyhow!("Client failed to start: {:?}", why));
+                Some(anyhow::anyhow!("Client failed to start: {:?}", why))
+            } else {
+                None
+            }
+        }
+        result = &mut overlay_server => {
+            overlay_server_finished = true;
+            match result {
+                Ok(()) => Some(anyhow::anyhow!("Overlay HTTP/WSS server stopped unexpectedly")),
+                Err(error) => {
+                    error!("Overlay HTTP/WSS server error: {error}");
+                    Some(error)
+                }
             }
         }
         _ = ctrl_c => {
             info!("Received Ctrl+C, shutting down...");
+            None
         }
         _ = terminate => {
             info!("Received terminate signal, shutting down...");
+            None
         }
+    };
+
+    overlay_shutdown.cancel();
+    client.shard_manager.shutdown_all().await;
+    if overlay_config.enabled
+        && !overlay_server_finished
+        && tokio::time::timeout(Duration::from_secs(5), &mut overlay_server)
+            .await
+            .is_err()
+    {
+        error!("Timed out while stopping the Overlay HTTP/WSS server");
+    }
+    expiration_task.abort();
+
+    if let Some(error) = run_error {
+        return Err(error);
     }
 
     info!("Bot shutdown gracefully");

@@ -1,0 +1,227 @@
+@layer reset, base, theme, components, state;
+
+@layer reset {
+  html,
+  body {
+    margin: 0;
+    min-block-size: 100%;
+    overflow: hidden;
+    background: transparent;
+  }
+
+  ol,
+  p {
+    margin: 0;
+  }
+
+  ol {
+    padding: 0;
+    list-style: none;
+  }
+
+  img {
+    display: block;
+  }
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    font-family:
+      Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+      "Segoe UI", sans-serif;
+    font-synthesis: none;
+    --overlay-inline: clamp(1.5rem, 3vw, 4rem);
+    --overlay-block: clamp(1.5rem, 4vh, 3.5rem);
+    --comment-width: min(42rem, calc(100vw - (2 * var(--overlay-inline))));
+    --comment-gap: 0.75rem;
+    --comment-padding: 0.9rem 1rem;
+    --avatar-size: 3rem;
+    --author-size: 0.875rem;
+    --body-size: clamp(1rem, 0.9rem + 0.35vw, 1.25rem);
+    --leave-duration: 160ms;
+  }
+
+  body {
+    min-block-size: 100dvh;
+  }
+
+  .overlay {
+    box-sizing: border-box;
+    display: flex;
+    align-items: flex-end;
+    min-block-size: 100dvh;
+    padding: var(--overlay-block) var(--overlay-inline);
+    opacity: 1;
+    transition: opacity var(--leave-duration) ease-out;
+  }
+
+  .comments {
+    display: grid;
+    gap: var(--comment-gap);
+    inline-size: var(--comment-width);
+  }
+}
+
+@layer theme {
+  .overlay[data-theme="dark"],
+  .overlay[data-theme="compact"] {
+    color-scheme: dark;
+    --surface: rgb(16 18 24 / 88%);
+    --border: rgb(255 255 255 / 16%);
+    --author: rgb(255 255 255 / 74%);
+    --body: #fff;
+    --avatar-surface: #596273;
+    --avatar-text: #fff;
+    --shadow: 0 0.65rem 1.6rem rgb(0 0 0 / 28%);
+  }
+
+  .overlay[data-theme="light"] {
+    color-scheme: light;
+    --surface: rgb(255 255 255 / 92%);
+    --border: rgb(20 24 32 / 13%);
+    --author: rgb(20 24 32 / 68%);
+    --body: #151922;
+    --avatar-surface: #dde2ea;
+    --avatar-text: #303846;
+    --shadow: 0 0.65rem 1.6rem rgb(20 24 32 / 18%);
+  }
+
+  .overlay[data-theme="compact"] {
+    --comment-width: min(34rem, calc(100vw - (2 * var(--overlay-inline))));
+    --comment-gap: 0.45rem;
+    --comment-padding: 0.6rem 0.75rem;
+    --avatar-size: 2.25rem;
+    --author-size: 0.75rem;
+    --body-size: 0.95rem;
+  }
+}
+
+@layer components {
+  .comment {
+    box-sizing: border-box;
+    display: grid;
+    grid-template-columns: var(--avatar-size) minmax(0, 1fr);
+    gap: 0.8rem;
+    align-items: start;
+    padding: var(--comment-padding);
+    overflow: hidden;
+    color: var(--body);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 0.85rem;
+    box-shadow: var(--shadow);
+    contain: layout style paint;
+  }
+
+  .comment__avatar {
+    position: relative;
+    inline-size: var(--avatar-size);
+    block-size: var(--avatar-size);
+    overflow: hidden;
+    color: var(--avatar-text);
+    background: var(--avatar-surface);
+    border-radius: 50%;
+  }
+
+  .comment__avatar-image,
+  .comment__avatar-fallback {
+    position: absolute;
+    inset: 0;
+    inline-size: 100%;
+    block-size: 100%;
+  }
+
+  .comment__avatar-image {
+    z-index: 1;
+    object-fit: cover;
+  }
+
+  .comment__avatar-image:not([src]) {
+    display: none;
+  }
+
+  .comment__avatar-fallback {
+    display: grid;
+    place-items: center;
+    font-size: calc(var(--avatar-size) * 0.42);
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  .comment__content {
+    min-inline-size: 0;
+  }
+
+  .comment__author {
+    overflow: hidden;
+    color: var(--author);
+    font-size: var(--author-size);
+    font-weight: 700;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .comment__body {
+    display: -webkit-box;
+    margin-block-start: 0.18rem;
+    overflow: hidden;
+    font-size: var(--body-size);
+    font-weight: 600;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+  }
+
+  .overlay[data-theme="compact"] .comment {
+    gap: 0.6rem;
+    border-radius: 0.65rem;
+  }
+}
+
+@layer state {
+  .overlay.is-transparent {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .overlay:not(.show-avatars) .comment {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .overlay:not(.show-avatars) .comment__avatar {
+    display: none;
+  }
+
+  .comment.comment--leaving {
+    opacity: 0;
+    transform: translateY(0.4rem);
+    transition:
+      opacity var(--leave-duration) ease-in,
+      transform var(--leave-duration) ease-in;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .overlay,
+    .comment.comment--leaving {
+      transition: none;
+    }
+  }
+
+  @media (forced-colors: active) {
+    .comment {
+      color: CanvasText;
+      background: Canvas;
+      border-color: CanvasText;
+      box-shadow: none;
+    }
+
+    .comment__author {
+      color: CanvasText;
+    }
+  }
+}
