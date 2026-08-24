@@ -645,6 +645,20 @@ fn build_components(
     ]
 }
 
+fn build_timed_out_reply(
+    day_one_id: &str,
+    day_two_id: &str,
+    reset_id: &str,
+    day_one: Option<DayOneBoss>,
+    day_two: Option<DayTwoBoss>,
+) -> poise::CreateReply {
+    poise::CreateReply::default()
+        .embed(build_embed(day_one, day_two))
+        .components(build_components(
+            day_one_id, day_two_id, reset_id, day_one, day_two, true,
+        ))
+}
+
 /// 夜ボスをプルダウンで選び、3日目の夜の王を逆引きします
 #[poise::command(slash_command)]
 pub async fn nightlord(
@@ -744,14 +758,7 @@ pub async fn nightlord(
     reply
         .edit(
             ctx,
-            poise::CreateReply::default().components(build_components(
-                &day_one_id,
-                &day_two_id,
-                &reset_id,
-                day_one,
-                day_two,
-                true,
-            )),
+            build_timed_out_reply(&day_one_id, &day_two_id, &reset_id, day_one, day_two),
         )
         .await?;
 
@@ -864,5 +871,24 @@ mod tests {
         let json = serde_json::to_value(embed).expect("embed should serialize");
 
         assert!(json.get("footer").is_none());
+    }
+
+    #[test]
+    fn timed_out_panel_keeps_result_and_disables_controls() {
+        let reply = build_timed_out_reply(
+            "day-one",
+            "day-two",
+            "reset",
+            Some(DayOneBoss::BellBearingHunter),
+            Some(DayTwoBoss::TreeSentinels),
+        );
+
+        assert_eq!(reply.embeds.len(), 1);
+
+        let components = serde_json::to_value(reply.components.expect("components should exist"))
+            .expect("components should serialize");
+        assert_eq!(components[0]["components"][0]["disabled"], true);
+        assert_eq!(components[1]["components"][0]["disabled"], true);
+        assert_eq!(components[2]["components"][0]["disabled"], true);
     }
 }
