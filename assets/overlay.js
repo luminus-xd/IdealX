@@ -5,16 +5,36 @@
   const RECONNECT_BASE_MS = 500;
   const RECONNECT_MAX_MS = 30_000;
   const LEAVE_FALLBACK_MS = 190;
+  const HIGHLIGHT_DURATION_MS = 8_000;
+  const HIGHLIGHT_LEAVE_MS = 200;
+  const EFFECT_DURATION_MS = 2_100;
+  const EFFECT_PARTICLE_COUNT = 10;
+  const MAX_EFFECT_GROUPS = 4;
   const VALID_THEMES = new Set(["dark", "light", "compact"]);
+  const EFFECTS = new Map([
+    ["peace", { label: "✌️", emoji: true }],
+    ["rock_on", { label: "🤟", emoji: true }],
+    ["laugh", { label: "www", emoji: false }],
+    ["good_game", { label: "GG", emoji: false }],
+    ["grass", { label: "草", emoji: false }],
+  ]);
   const DISCORD_CDN_HOST = "cdn.discordapp.com";
   const STATIC_AVATAR_PATH = /^\/(?:avatars\/\d+\/[a-zA-Z0-9_-]+|guilds\/\d+\/users\/\d+\/avatars\/[a-zA-Z0-9_-]+|embed\/avatars\/\d+)\.(?:png|jpe?g|webp)$/;
 
   const overlay = document.querySelector("#overlay");
   const commentsElement = document.querySelector("#comments");
+  const effectsElement = document.querySelector("#effects");
+  const highlightElement = document.querySelector("#highlight");
   const commentTemplate = document.querySelector("#comment-template");
+  const highlightTemplate = document.querySelector("#highlight-template");
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
-  if (!(overlay instanceof HTMLElement) || !(commentsElement instanceof HTMLOListElement) || !(commentTemplate instanceof HTMLTemplateElement)) {
+  if (!(overlay instanceof HTMLElement)
+    || !(commentsElement instanceof HTMLOListElement)
+    || !(effectsElement instanceof HTMLElement)
+    || !(highlightElement instanceof HTMLElement)
+    || !(commentTemplate instanceof HTMLTemplateElement)
+    || !(highlightTemplate instanceof HTMLTemplateElement)) {
     return;
   }
 
@@ -35,9 +55,12 @@
   let connectionGeneration = 0;
   let terminal = false;
   let paused = false;
+  let highlightTimer = 0;
+  let highlightLeaveTimer = 0;
   let operationQueue = Promise.resolve();
   const comments = new Map();
   const expiryTimers = new Map();
+  const effectTimers = new Map();
 
   applyAppearance();
 
@@ -47,6 +70,11 @@
   }
 
   connect();
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      clearTransientPresentation();
+    }
+  });
 
   function getPublicId(pathname) {
     const match = pathname.match(/\/overlay\/([^/]+)\/?$/);
@@ -231,12 +259,24 @@
       case "comment_removed":
         await removeComment(message.discord_message_id);
         break;
+      case "comment_highlighted":
+        if (!paused) {
+          showHighlight(message.highlight);
+        }
+        break;
+      case "effect_triggered":
+        if (!paused) {
+          showEffect(message.effect);
+        }
+        break;
       case "cleared":
         await clearComments();
+        clearTransientPresentation();
         break;
       case "paused":
         paused = true;
         await clearComments();
+        clearTransientPresentation();
         break;
       case "resumed":
         paused = false;
@@ -276,6 +316,7 @@
 
     paused = message.status === "paused";
     if (paused || !Array.isArray(message.comments)) {
+      updateVisibility();
       return;
     }
 
@@ -502,6 +543,124 @@
     updateVisibility();
   }
 
+  function showHighlight(highlight) {
+    if (!isValidHighlight(highlight) || document.hidden) {
+      return;
+    }
+
+    hideHighlight(true);
+    const fragment = highlightTemplate.content.cloneNode(true);
+    const card = fragment.querySelector(".highlight-card");
+    const author = fragment.querySelector(".highlight-card__author");
+    const body = fragment.querySelector(".highlight-card__body");
+    const fallback = fragment.querySelector(".highlight-card__avatar-fallback");
+    const avatar = fragment.querySelector(".highlight-card__avatar");
+    if (!(card instanceof HTMLElement)
+      || !(author instanceof HTMLElement)
+      || !(body instanceof HTMLElement)
+      || !(fallback instanceof HTMLElement)
+      || !(avatar instanceof HTMLElement)) {
+      return;
+    }
+
+    card.dataset.commentId = highlight.discord_message_id;
+    author.textContent = highlight.author_name;
+    body.textContent = highlight.body;
+    fallback.textContent = getInitial(highlight.author_name);
+
+    if (showAvatar) {
+      const image = document.createElement("img");
+      image.className = "highlight-card__avatar-image";
+      image.alt = "";
+      image.referrerPolicy = "no-referrer";
+      image.decoding = "async";
+      configureAvatar(image, highlight.avatar_url);
+      avatar.append(image);
+    }
+
+    highlightElement.append(fragment);
+    window.requestAnimationFrame(() => {
+      if (highlightElement.hasChildNodes()) {
+        highlightElement.classList.add("is-visible");
+      }
+    });
+    highlightTimer = window.setTimeout(() => hideHighlight(false), HIGHLIGHT_DURATION_MS);
+  }
+
+  function hideHighlight(immediate) {
+    window.clearTimeout(highlightTimer);
+    window.clearTimeout(highlightLeaveTimer);
+    highlightTimer = 0;
+    highlightLeaveTimer = 0;
+    highlightElement.classList.remove("is-visible");
+
+    if (immediate || reducedMotion.matches) {
+      highlightElement.replaceChildren();
+      return;
+    }
+
+    highlightLeaveTimer = window.setTimeout(() => {
+      highlightLeaveTimer = 0;
+      highlightElement.replaceChildren();
+    }, HIGHLIGHT_LEAVE_MS);
+  }
+
+  function showEffect(kind) {
+    const definition = EFFECTS.get(kind);
+    if (!definition || document.hidden) {
+      return;
+    }
+
+    while (effectTimers.size >= MAX_EFFECT_GROUPS) {
+      const oldest = effectTimers.keys().next().value;
+      removeEffect(oldest);
+    }
+
+    const group = document.createElement("div");
+    group.className = `effect effect--${kind}`;
+    const particleCount = reducedMotion.matches ? 1 : EFFECT_PARTICLE_COUNT;
+    for (let index = 0; index < particleCount; index += 1) {
+      const particle = document.createElement("span");
+      particle.className = definition.emoji
+        ? "effect__particle effect__particle--emoji"
+        : "effect__particle";
+      particle.textContent = definition.label;
+
+      if (reducedMotion.matches) {
+        particle.classList.add("effect__particle--reduced");
+      }
+      group.append(particle);
+    }
+
+    effectsElement.append(group);
+    const duration = reducedMotion.matches ? 1_200 : EFFECT_DURATION_MS;
+    const timer = window.setTimeout(() => removeEffect(group), duration);
+    effectTimers.set(group, timer);
+  }
+
+  function removeEffect(group) {
+    if (!(group instanceof HTMLElement)) {
+      return;
+    }
+    window.clearTimeout(effectTimers.get(group));
+    effectTimers.delete(group);
+    group.remove();
+  }
+
+  function clearEffects() {
+    for (const [group, timer] of effectTimers) {
+      window.clearTimeout(timer);
+      group.remove();
+    }
+    effectTimers.clear();
+    effectsElement.replaceChildren();
+  }
+
+  function clearTransientPresentation() {
+    hideHighlight(true);
+    clearEffects();
+  }
+
   function makeTransparentImmediately() {
     overlay.classList.add("is-transparent");
     for (const timer of expiryTimers.values()) {
@@ -510,10 +669,12 @@
     expiryTimers.clear();
     comments.clear();
     commentsElement.replaceChildren();
+    clearTransientPresentation();
   }
 
   function updateVisibility() {
-    overlay.classList.toggle("is-transparent", paused || comments.size === 0);
+    overlay.classList.toggle("is-transparent", paused);
+    commentsElement.classList.toggle("is-empty", comments.size === 0);
   }
 
   function applyAppearance() {
@@ -557,6 +718,18 @@
       && Number.isFinite(Date.parse(comment.created_at))
       && typeof comment.expires_at === "string"
       && Number.isFinite(Date.parse(comment.expires_at));
+  }
+
+  function isValidHighlight(highlight) {
+    return isObject(highlight)
+      && typeof highlight.discord_message_id === "string"
+      && highlight.discord_message_id.length > 0
+      && highlight.discord_message_id.length <= 32
+      && typeof highlight.author_name === "string"
+      && highlight.author_name.length <= 256
+      && typeof highlight.body === "string"
+      && highlight.body.length <= 4_000
+      && (highlight.avatar_url === null || typeof highlight.avatar_url === "string");
   }
 
   function isExpired(expiresAt) {

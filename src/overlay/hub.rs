@@ -1,6 +1,6 @@
 use super::model::{
-    NewComment, OverlayComment, OverlayEvent, OverlayTheme, SessionCredentials, SessionEndReason,
-    SessionStatus, SessionSummary, Snapshot, StartSession,
+    HighlightedComment, NewComment, OverlayComment, OverlayEffectKind, OverlayEvent, OverlayTheme,
+    SessionCredentials, SessionEndReason, SessionStatus, SessionSummary, Snapshot, StartSession,
 };
 use super::sanitize::{sanitize_author_name, sanitize_avatar_url, sanitize_body};
 use rand::{rngs::OsRng, RngCore};
@@ -17,6 +17,7 @@ const MAX_COMMENTS: usize = 3;
 const BROADCAST_CAPACITY: usize = 64;
 const RATE_LIMIT_MAX_MESSAGES: usize = 5;
 const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(10);
+const EFFECT_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HubError {
@@ -66,6 +67,7 @@ struct Session {
     expires_at_unix_ms: i64,
     comments: VecDeque<StoredComment>,
     rate_limits: HashMap<u64, VecDeque<Instant>>,
+    effect_rate_limits: HashMap<u64, Instant>,
     sender: broadcast::Sender<OverlayEvent>,
 }
 
@@ -118,6 +120,7 @@ impl OverlayHub {
             expires_at_unix_ms: add_duration_ms(now_unix_ms, self.session_ttl),
             comments: VecDeque::with_capacity(MAX_COMMENTS),
             rate_limits: HashMap::new(),
+            effect_rate_limits: HashMap::new(),
             sender,
         });
 
@@ -157,6 +160,7 @@ impl OverlayHub {
         if body.is_empty() || author_name.is_empty() {
             return false;
         }
+        let keyword_effect = keyword_effect(&body);
 
         if session.comments.len() >= MAX_COMMENTS {
             if let Some(removed) = session.comments.pop_front() {
@@ -187,6 +191,75 @@ impl OverlayHub {
         session.send(OverlayEvent::CommentAdded {
             revision: session.revision,
             comment,
+        });
+        if let Some(effect) = keyword_effect {
+            session.bump_revision();
+            session.send(OverlayEvent::EffectTriggered {
+                revision: session.revision,
+                effect,
+            });
+        }
+        true
+    }
+
+    /// 配信管理者が📌を付けたDiscordコメントを一時的に大きく表示する。
+    pub async fn highlight_comment(
+        &self,
+        owner_user_id: u64,
+        input: NewComment,
+    ) -> Result<(), HubError> {
+        self.prune_expired().await;
+        let mut guard = self.session.write().await;
+        let session = controlled_session(&mut guard, owner_user_id, input.channel_id)?;
+        if session.status != SessionStatus::Active {
+            return Err(HubError::AlreadyPaused);
+        }
+        if session.guild_id != input.guild_id {
+            return Err(HubError::WrongChannel);
+        }
+
+        let body = sanitize_body(&input.body);
+        let author_name = sanitize_author_name(&input.author_name);
+        if body.is_empty() || author_name.is_empty() {
+            return Ok(());
+        }
+
+        session.bump_revision();
+        session.send(OverlayEvent::CommentHighlighted {
+            revision: session.revision,
+            highlight: HighlightedComment {
+                discord_message_id: input.discord_message_id,
+                author_name,
+                avatar_url: sanitize_avatar_url(input.avatar_url.as_deref()),
+                body,
+            },
+        });
+        Ok(())
+    }
+
+    /// ✌️・🤟リアクションに対応する一過性の演出を配信する。
+    pub async fn trigger_effect(
+        &self,
+        channel_id: u64,
+        author_user_id: u64,
+        effect: OverlayEffectKind,
+    ) -> bool {
+        self.prune_expired().await;
+        let mut guard = self.session.write().await;
+        let Some(session) = guard.as_mut() else {
+            return false;
+        };
+        if session.status != SessionStatus::Active
+            || session.channel_id != channel_id
+            || !session.accept_effect_author(author_user_id)
+        {
+            return false;
+        }
+
+        session.bump_revision();
+        session.send(OverlayEvent::EffectTriggered {
+            revision: session.revision,
+            effect,
         });
         true
     }
@@ -509,6 +582,19 @@ impl Session {
         entries.push_back(now);
         true
     }
+
+    fn accept_effect_author(&mut self, author_user_id: u64) -> bool {
+        let now = Instant::now();
+        if self
+            .effect_rate_limits
+            .get(&author_user_id)
+            .is_some_and(|seen_at| now.duration_since(*seen_at) < EFFECT_RATE_LIMIT_WINDOW)
+        {
+            return false;
+        }
+        self.effect_rate_limits.insert(author_user_id, now);
+        true
+    }
 }
 
 fn controlled_session(
@@ -546,6 +632,23 @@ fn unix_now_ms() -> i64 {
 
 fn add_duration_ms(base: i64, duration: Duration) -> i64 {
     base.saturating_add(i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
+}
+
+fn keyword_effect(body: &str) -> Option<OverlayEffectKind> {
+    if contains_ascii_word(body, "gg") {
+        Some(OverlayEffectKind::GoodGame)
+    } else if body.contains('草') {
+        Some(OverlayEffectKind::Grass)
+    } else if body.to_ascii_lowercase().contains("www") {
+        Some(OverlayEffectKind::Laugh)
+    } else {
+        None
+    }
+}
+
+fn contains_ascii_word(body: &str, expected: &str) -> bool {
+    body.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .any(|word| word.eq_ignore_ascii_case(expected))
 }
 
 #[cfg(test)]
@@ -714,6 +817,92 @@ mod tests {
         }
         assert!(!hub.add_comment(comment(99, 10)).await);
         assert!(hub.add_comment(comment(100, 11)).await);
+    }
+
+    #[tokio::test]
+    async fn owner_can_highlight_a_comment_in_the_session_channel() {
+        let hub = hub();
+        let credentials = hub.start(start_request()).await.unwrap();
+        let (_, mut receiver) = hub
+            .authenticate(&credentials.public_id, &credentials.capability)
+            .await
+            .unwrap();
+
+        hub.highlight_comment(3, comment(1, 10)).await.unwrap();
+        let event = receiver.recv().await.unwrap();
+
+        assert!(matches!(
+            event,
+            OverlayEvent::CommentHighlighted { highlight, .. }
+                if highlight.discord_message_id == 1
+        ));
+        assert_eq!(
+            hub.highlight_comment(999, comment(2, 10)).await,
+            Err(HubError::Unauthorized)
+        );
+    }
+
+    #[tokio::test]
+    async fn reaction_effects_are_rate_limited_per_author() {
+        let hub = hub();
+        let credentials = hub.start(start_request()).await.unwrap();
+        let (_, mut receiver) = hub
+            .authenticate(&credentials.public_id, &credentials.capability)
+            .await
+            .unwrap();
+
+        assert!(hub.trigger_effect(2, 10, OverlayEffectKind::Peace).await);
+        assert!(!hub.trigger_effect(2, 10, OverlayEffectKind::RockOn).await);
+        assert!(hub.trigger_effect(2, 11, OverlayEffectKind::RockOn).await);
+
+        assert!(matches!(
+            receiver.recv().await.unwrap(),
+            OverlayEvent::EffectTriggered {
+                effect: OverlayEffectKind::Peace,
+                ..
+            }
+        ));
+        assert!(matches!(
+            receiver.recv().await.unwrap(),
+            OverlayEvent::EffectTriggered {
+                effect: OverlayEffectKind::RockOn,
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn accepted_keyword_comment_triggers_one_effect() {
+        let hub = hub();
+        let credentials = hub.start(start_request()).await.unwrap();
+        let (_, mut receiver) = hub
+            .authenticate(&credentials.public_id, &credentials.capability)
+            .await
+            .unwrap();
+        let mut input = comment(1, 10);
+        input.body = "GG 草 www".to_string();
+
+        assert!(hub.add_comment(input).await);
+        assert!(matches!(
+            receiver.recv().await.unwrap(),
+            OverlayEvent::CommentAdded { .. }
+        ));
+        assert!(matches!(
+            receiver.recv().await.unwrap(),
+            OverlayEvent::EffectTriggered {
+                effect: OverlayEffectKind::GoodGame,
+                ..
+            }
+        ));
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn keyword_detection_is_case_insensitive_and_avoids_partial_gg() {
+        assert_eq!(keyword_effect("gg!"), Some(OverlayEffectKind::GoodGame));
+        assert_eq!(keyword_effect("これは草"), Some(OverlayEffectKind::Grass));
+        assert_eq!(keyword_effect("wwww"), Some(OverlayEffectKind::Laugh));
+        assert_eq!(keyword_effect("egg"), None);
     }
 
     #[tokio::test]

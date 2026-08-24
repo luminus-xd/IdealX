@@ -15,6 +15,8 @@
   <body>
     <main id="overlay" class="overlay is-transparent" data-theme="dark" aria-live="polite" aria-atomic="false">
       <ol id="comments" class="comments" aria-label="配信コメント"></ol>
+      <div id="effects" class="effects" aria-hidden="true"></div>
+      <section id="highlight" class="highlight" aria-live="polite" aria-atomic="true" aria-label="ピックアップコメント"></section>
     </main>
 
     <template id="comment-template">
@@ -27,6 +29,19 @@
           <p class="comment__body"></p>
         </div>
       </li>
+    </template>
+
+    <template id="highlight-template">
+      <article class="highlight-card">
+        <div class="highlight-card__avatar" aria-hidden="true">
+          <span class="highlight-card__avatar-fallback"></span>
+        </div>
+        <div class="highlight-card__content">
+          <p class="highlight-card__label">ピックアップ</p>
+          <p class="highlight-card__body"></p>
+          <p class="highlight-card__author"></p>
+        </div>
+      </article>
     </template>
   </body>
 </html>

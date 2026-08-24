@@ -101,6 +101,30 @@ pub struct OverlayComment {
     pub expires_at_unix_ms: i64,
 }
 
+/// 配信管理者が一時的に大きく表示する、安全化済みコメント。
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct HighlightedComment {
+    #[serde(
+        serialize_with = "serialize_u64_as_string",
+        deserialize_with = "deserialize_u64_from_string"
+    )]
+    pub discord_message_id: u64,
+    pub author_name: String,
+    pub avatar_url: Option<String>,
+    pub body: String,
+}
+
+/// OBS側で再生する一過性の演出。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OverlayEffectKind {
+    Peace,
+    RockOn,
+    Laugh,
+    GoodGame,
+    Grass,
+}
+
 /// WebSocket接続時に返す、セッションの完全な現在状態。
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
@@ -144,6 +168,14 @@ pub enum OverlayEvent {
         )]
         discord_message_id: u64,
     },
+    CommentHighlighted {
+        revision: u64,
+        highlight: HighlightedComment,
+    },
+    EffectTriggered {
+        revision: u64,
+        effect: OverlayEffectKind,
+    },
     Cleared {
         revision: u64,
     },
@@ -166,6 +198,8 @@ impl OverlayEvent {
             Self::CommentAdded { revision, .. }
             | Self::CommentUpdated { revision, .. }
             | Self::CommentRemoved { revision, .. }
+            | Self::CommentHighlighted { revision, .. }
+            | Self::EffectTriggered { revision, .. }
             | Self::Cleared { revision }
             | Self::Paused { revision }
             | Self::Resumed { revision }
@@ -280,5 +314,30 @@ mod tests {
         let value = serde_json::to_value(event).unwrap();
 
         assert_eq!(value["discord_message_id"], "9007199254740993");
+    }
+
+    #[test]
+    fn transient_events_have_stable_wire_names() {
+        let highlight = OverlayEvent::CommentHighlighted {
+            revision: 3,
+            highlight: HighlightedComment {
+                discord_message_id: 42,
+                author_name: "Alice".to_string(),
+                avatar_url: None,
+                body: "見てほしいコメント".to_string(),
+            },
+        };
+        let effect = OverlayEvent::EffectTriggered {
+            revision: 4,
+            effect: OverlayEffectKind::RockOn,
+        };
+
+        let highlight_value = serde_json::to_value(highlight).unwrap();
+        let effect_value = serde_json::to_value(effect).unwrap();
+
+        assert_eq!(highlight_value["type"], "comment_highlighted");
+        assert_eq!(highlight_value["highlight"]["discord_message_id"], "42");
+        assert_eq!(effect_value["type"], "effect_triggered");
+        assert_eq!(effect_value["effect"], "rock_on");
     }
 }

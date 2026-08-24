@@ -42,7 +42,11 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
-use overlay::{config::OverlayConfig, hub::OverlayHub, model::NewComment};
+use overlay::{
+    config::OverlayConfig,
+    hub::OverlayHub,
+    model::{NewComment, OverlayEffectKind},
+};
 
 /// チャンネルごとの会話リセット時刻を管理する型
 pub type ResetTimes = Arc<RwLock<HashMap<ChannelId, chrono::DateTime<chrono::Utc>>>>;
@@ -260,8 +264,10 @@ fn ensure_alternating_roles(
                     }
                     MessageContent::Blocks(ref blocks) => {
                         // Blocks型: 前のメッセージのテキストをBlocksの先頭に統合
-                        let prev_content =
-                            std::mem::replace(&mut last.content, MessageContent::Text(String::new()));
+                        let prev_content = std::mem::replace(
+                            &mut last.content,
+                            MessageContent::Text(String::new()),
+                        );
                         let mut merged_blocks = Vec::new();
                         if let MessageContent::Text(prev_text) = prev_content {
                             merged_blocks.push(ContentBlock::Text(prev_text));
@@ -281,11 +287,8 @@ fn ensure_alternating_roles(
 
 // Bot構造体のメソッド実装
 impl Bot {
-    /// OBSオーバーレイ対象の通常メッセージを、AI処理とは独立してHubへ渡す。
-    async fn publish_overlay_message(&self, msg: &Message) {
-        let Some(guild_id) = msg.guild_id else {
-            return;
-        };
+    fn new_overlay_comment(msg: &Message) -> Option<NewComment> {
+        let guild_id = msg.guild_id?;
         if msg.author.bot
             || msg.webhook_id.is_some()
             || !matches!(
@@ -294,7 +297,7 @@ impl Bot {
             )
             || msg.content.trim().is_empty()
         {
-            return;
+            return None;
         }
 
         let author_name = msg
@@ -304,19 +307,25 @@ impl Bot {
             .or_else(|| msg.author.global_name.clone())
             .unwrap_or_else(|| msg.author.name.clone());
 
-        let _ = self
-            .overlay_hub
-            .add_comment(NewComment {
-                guild_id: guild_id.get(),
-                channel_id: msg.channel_id.get(),
-                discord_message_id: msg.id.get(),
-                author_user_id: msg.author.id.get(),
-                author_name,
-                avatar_url: Some(msg.author.static_face()),
-                body: msg.content.clone(),
-                created_at_unix_ms: Some(msg.timestamp.unix_timestamp().saturating_mul(1_000)),
-            })
-            .await;
+        Some(NewComment {
+            guild_id: guild_id.get(),
+            channel_id: msg.channel_id.get(),
+            discord_message_id: msg.id.get(),
+            author_user_id: msg.author.id.get(),
+            author_name,
+            avatar_url: Some(msg.author.static_face()),
+            body: msg.content.clone(),
+            created_at_unix_ms: Some(msg.timestamp.unix_timestamp().saturating_mul(1_000)),
+        })
+    }
+
+    /// OBSオーバーレイ対象の通常メッセージを、AI処理とは独立してHubへ渡す。
+    async fn publish_overlay_message(&self, msg: &Message) {
+        let Some(comment) = Self::new_overlay_comment(msg) else {
+            return;
+        };
+
+        let _ = self.overlay_hub.add_comment(comment).await;
     }
 
     /// 特定のサーバーの特定のフォーラムチャンネルかどうかを判定するメソッド
@@ -667,24 +676,37 @@ impl EventHandler for Bot {
             .await;
     }
 
-    /// 📝 リアクションが追加されたときにメッセージを要約する
+    /// オーバーレイ演出または要約に対応するリアクションを処理する。
     async fn reaction_add(&self, ctx: Context, add_reaction: Reaction) {
-        // 📝 リアクションのみ処理
-        let is_memo_reaction = match &add_reaction.emoji {
-            ReactionType::Unicode(s) => s == "📝",
-            _ => false,
+        let emoji = match &add_reaction.emoji {
+            ReactionType::Unicode(value) => value.trim_end_matches('\u{fe0f}'),
+            _ => return,
         };
-        if !is_memo_reaction {
+        if !matches!(emoji, "✌" | "🤟" | "📌" | "📝") {
             return;
         }
 
         // ボットのリアクションは無視
-        if let Some(user_id) = add_reaction.user_id {
-            if let Ok(user) = user_id.to_user(&ctx.http).await {
-                if user.bot {
-                    return;
-                }
+        let Some(user_id) = add_reaction.user_id else {
+            return;
+        };
+        if let Ok(user) = user_id.to_user(&ctx.http).await {
+            if user.bot {
+                return;
             }
+        }
+
+        let effect = match emoji {
+            "✌" => Some(OverlayEffectKind::Peace),
+            "🤟" => Some(OverlayEffectKind::RockOn),
+            _ => None,
+        };
+        if let Some(effect) = effect {
+            let _ = self
+                .overlay_hub
+                .trigger_effect(add_reaction.channel_id.get(), user_id.get(), effect)
+                .await;
+            return;
         }
 
         // リアクションされたメッセージを取得
@@ -695,6 +717,17 @@ impl EventHandler for Bot {
                 return;
             }
         };
+
+        if emoji == "📌" {
+            let Some(comment) = Self::new_overlay_comment(&message) else {
+                return;
+            };
+            let _ = self
+                .overlay_hub
+                .highlight_comment(user_id.get(), comment)
+                .await;
+            return;
+        }
 
         // メッセージ内のURLを抽出（最大3件）
         let urls: Vec<&str> = URL_RE

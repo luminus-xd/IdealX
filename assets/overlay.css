@@ -40,6 +40,10 @@
     --author-size: 0.875rem;
     --body-size: clamp(1rem, 0.9rem + 0.35vw, 1.25rem);
     --leave-duration: 160ms;
+    --enter-duration: 180ms;
+    --z-comments: 10;
+    --z-effects: 20;
+    --z-highlight: 30;
   }
 
   body {
@@ -47,19 +51,26 @@
   }
 
   .overlay {
+    position: relative;
     box-sizing: border-box;
     display: flex;
     align-items: flex-end;
     min-block-size: 100dvh;
     padding: var(--overlay-block) var(--overlay-inline);
+    overflow: hidden;
     opacity: 1;
+    isolation: isolate;
     transition: opacity var(--leave-duration) ease-out;
   }
 
   .comments {
+    position: relative;
+    z-index: var(--z-comments);
     display: grid;
     gap: var(--comment-gap);
     inline-size: var(--comment-width);
+    opacity: 1;
+    transition: opacity var(--leave-duration) ease-out;
   }
 }
 
@@ -73,6 +84,8 @@
     --body: #fff;
     --avatar-surface: #596273;
     --avatar-text: #fff;
+    --accent: #fee75c;
+    --effect-surface: rgb(16 18 24 / 82%);
     --shadow: 0 0.65rem 1.6rem rgb(0 0 0 / 28%);
   }
 
@@ -84,6 +97,8 @@
     --body: #151922;
     --avatar-surface: #dde2ea;
     --avatar-text: #303846;
+    --accent: #9a6700;
+    --effect-surface: rgb(255 255 255 / 90%);
     --shadow: 0 0.65rem 1.6rem rgb(20 24 32 / 18%);
   }
 
@@ -181,6 +196,257 @@
     gap: 0.6rem;
     border-radius: 0.65rem;
   }
+
+  .effects {
+    position: absolute;
+    z-index: var(--z-effects);
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    contain: layout style paint;
+  }
+
+  .effect {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+  }
+
+  .effect__particle {
+    position: absolute;
+    inset-block-start: var(--effect-start-y);
+    inset-inline-start: var(--effect-start-x);
+    display: grid;
+    place-items: center;
+    min-inline-size: 1.6em;
+    min-block-size: 1.6em;
+    padding: 0.12em 0.28em;
+    color: var(--body);
+    font-size: clamp(1.8rem, 2vw + 1rem, 4rem);
+    font-weight: 800;
+    line-height: 1;
+    background: var(--effect-surface);
+    border: 1px solid var(--border);
+    border-radius: 0.45em;
+    box-shadow: var(--shadow);
+    opacity: 0;
+    transform: translate3d(0, 1rem, 0) scale(0.72);
+    animation: effect-burst 1.6s ease-out var(--effect-delay) forwards;
+  }
+
+  .effect__particle--emoji {
+    min-inline-size: 0;
+    min-block-size: 0;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    filter: drop-shadow(0 0.3rem 0.45rem rgb(0 0 0 / 28%));
+  }
+
+  .effect__particle:nth-child(1) {
+    --effect-start-x: 14%;
+    --effect-start-y: 84%;
+    --effect-x: -8vw;
+    --effect-y: -48vh;
+    --effect-rotation: -18deg;
+    --effect-delay: 0ms;
+  }
+
+  .effect__particle:nth-child(2) {
+    --effect-start-x: 25%;
+    --effect-start-y: 72%;
+    --effect-x: 14vw;
+    --effect-y: -42vh;
+    --effect-rotation: 14deg;
+    --effect-delay: 45ms;
+  }
+
+  .effect__particle:nth-child(3) {
+    --effect-start-x: 37%;
+    --effect-start-y: 88%;
+    --effect-x: -18vw;
+    --effect-y: -62vh;
+    --effect-rotation: 22deg;
+    --effect-delay: 90ms;
+  }
+
+  .effect__particle:nth-child(4) {
+    --effect-start-x: 48%;
+    --effect-start-y: 78%;
+    --effect-x: 7vw;
+    --effect-y: -55vh;
+    --effect-rotation: -12deg;
+    --effect-delay: 135ms;
+  }
+
+  .effect__particle:nth-child(5) {
+    --effect-start-x: 59%;
+    --effect-start-y: 90%;
+    --effect-x: 19vw;
+    --effect-y: -46vh;
+    --effect-rotation: 18deg;
+    --effect-delay: 180ms;
+  }
+
+  .effect__particle:nth-child(6) {
+    --effect-start-x: 70%;
+    --effect-start-y: 70%;
+    --effect-x: -13vw;
+    --effect-y: -52vh;
+    --effect-rotation: -22deg;
+    --effect-delay: 225ms;
+  }
+
+  .effect__particle:nth-child(7) {
+    --effect-start-x: 82%;
+    --effect-start-y: 86%;
+    --effect-x: 8vw;
+    --effect-y: -64vh;
+    --effect-rotation: 12deg;
+    --effect-delay: 270ms;
+  }
+
+  .effect__particle:nth-child(8) {
+    --effect-start-x: 20%;
+    --effect-start-y: 94%;
+    --effect-x: 25vw;
+    --effect-y: -36vh;
+    --effect-rotation: -16deg;
+    --effect-delay: 315ms;
+  }
+
+  .effect__particle:nth-child(9) {
+    --effect-start-x: 52%;
+    --effect-start-y: 92%;
+    --effect-x: -24vw;
+    --effect-y: -40vh;
+    --effect-rotation: 20deg;
+    --effect-delay: 360ms;
+  }
+
+  .effect__particle:nth-child(10) {
+    --effect-start-x: 76%;
+    --effect-start-y: 82%;
+    --effect-x: -6vw;
+    --effect-y: -58vh;
+    --effect-rotation: -10deg;
+    --effect-delay: 405ms;
+  }
+
+  .effect__particle--reduced {
+    inset-block-start: 42%;
+    inset-inline-start: 50%;
+    opacity: 1;
+    transform: translate3d(-50%, -50%, 0);
+    animation: none;
+  }
+
+  .highlight {
+    position: absolute;
+    z-index: var(--z-highlight);
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: var(--overlay-block) var(--overlay-inline);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--enter-duration) ease-out;
+  }
+
+  .highlight-card {
+    box-sizing: border-box;
+    display: grid;
+    grid-template-columns: 4rem minmax(0, 1fr);
+    gap: 1rem;
+    align-items: center;
+    inline-size: min(54rem, calc(100vw - (2 * var(--overlay-inline))));
+    padding: 1.25rem 1.4rem;
+    color: var(--body);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-inline-start: 0.35rem solid var(--accent);
+    border-radius: 1rem;
+    box-shadow: var(--shadow);
+    opacity: 0;
+    transform: translate3d(0, 0.75rem, 0) scale(0.96);
+    transition:
+      opacity var(--enter-duration) ease-out,
+      transform var(--enter-duration) ease-out;
+    contain: layout style paint;
+  }
+
+  .highlight-card__avatar {
+    position: relative;
+    inline-size: 4rem;
+    block-size: 4rem;
+    overflow: hidden;
+    color: var(--avatar-text);
+    background: var(--avatar-surface);
+    border-radius: 50%;
+  }
+
+  .highlight-card__avatar-image,
+  .highlight-card__avatar-fallback {
+    position: absolute;
+    inset: 0;
+    inline-size: 100%;
+    block-size: 100%;
+  }
+
+  .highlight-card__avatar-image {
+    z-index: 1;
+    object-fit: cover;
+  }
+
+  .highlight-card__avatar-image:not([src]) {
+    display: none;
+  }
+
+  .highlight-card__avatar-fallback {
+    display: grid;
+    place-items: center;
+    font-size: 1.5rem;
+    font-weight: 700;
+  }
+
+  .highlight-card__content {
+    min-inline-size: 0;
+  }
+
+  .highlight-card__label {
+    color: var(--accent);
+    font-size: 0.8rem;
+    font-weight: 800;
+    line-height: 1.2;
+  }
+
+  .highlight-card__body {
+    display: -webkit-box;
+    margin-block-start: 0.35rem;
+    overflow: hidden;
+    font-size: clamp(1.3rem, 1rem + 0.8vw, 2rem);
+    font-weight: 700;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    text-wrap: pretty;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+  }
+
+  .highlight-card__author {
+    margin-block-start: 0.5rem;
+    overflow: hidden;
+    color: var(--author);
+    font-size: 0.9rem;
+    font-weight: 700;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 @layer state {
@@ -197,6 +463,27 @@
     display: none;
   }
 
+  .comments.is-empty {
+    opacity: 0;
+  }
+
+  .overlay:not(.show-avatars) .highlight-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .overlay:not(.show-avatars) .highlight-card__avatar {
+    display: none;
+  }
+
+  .highlight.is-visible,
+  .highlight.is-visible .highlight-card {
+    opacity: 1;
+  }
+
+  .highlight.is-visible .highlight-card {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+
   .comment.comment--leaving {
     opacity: 0;
     transform: translateY(0.4rem);
@@ -205,15 +492,43 @@
       transform var(--leave-duration) ease-in;
   }
 
+  @keyframes effect-burst {
+    0% {
+      opacity: 0;
+      transform: translate3d(0, 1rem, 0) scale(0.72) rotate(0deg);
+    }
+
+    18% {
+      opacity: 1;
+    }
+
+    100% {
+      opacity: 0;
+      transform: translate3d(var(--effect-x), var(--effect-y), 0) scale(1.08)
+        rotate(var(--effect-rotation));
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .overlay,
-    .comment.comment--leaving {
+    .comments,
+    .comment.comment--leaving,
+    .highlight,
+    .highlight-card {
       transition: none;
     }
   }
 
   @media (forced-colors: active) {
     .comment {
+      color: CanvasText;
+      background: Canvas;
+      border-color: CanvasText;
+      box-shadow: none;
+    }
+
+    .highlight-card,
+    .effect__particle {
       color: CanvasText;
       background: Canvas;
       border-color: CanvasText;
