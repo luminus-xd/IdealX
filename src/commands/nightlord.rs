@@ -666,8 +666,7 @@ pub async fn nightlord(ctx: Context<'_>) -> Result<(), Error> {
                     day_one,
                     day_two,
                     false,
-                ))
-                .ephemeral(true),
+                )),
         )
         .await?;
 
@@ -680,7 +679,6 @@ pub async fn nightlord(ctx: Context<'_>) -> Result<(), Error> {
 
         let valid_ids = [day_one_id.clone(), day_two_id.clone(), reset_id.clone()];
         let Some(interaction) = serenity::ComponentInteractionCollector::new(ctx)
-            .author_id(ctx.author().id)
             .channel_id(ctx.channel_id())
             .timeout(remaining)
             .filter(move |interaction| valid_ids.contains(&interaction.data.custom_id))
@@ -688,6 +686,20 @@ pub async fn nightlord(ctx: Context<'_>) -> Result<(), Error> {
         else {
             break;
         };
+
+        if interaction.user.id != ctx.author().id {
+            interaction
+                .create_response(
+                    ctx.serenity_context(),
+                    serenity::CreateInteractionResponse::Message(
+                        serenity::CreateInteractionResponseMessage::new()
+                            .content("この操作パネルはコマンドを実行した本人だけが操作できます。")
+                            .ephemeral(true),
+                    ),
+                )
+                .await?;
+            continue;
+        }
 
         if interaction.data.custom_id == reset_id {
             day_one = None;
