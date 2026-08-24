@@ -110,10 +110,7 @@ pub async fn start(
     let announcement = CreateMessage::new().embed(
         CreateEmbed::new()
             .title("📺 配信コメント表示を開始しました")
-            .description(
-                "このチャンネルへの投稿は、配信映像に表示される場合があります。\n\
-                 📌: 管理者がコメントをピックアップ / ✌️・🤟: リアクション演出 / www・GG・草: キーワード演出",
-            )
+            .description("このチャンネルへの投稿は、配信映像に表示される場合があります。")
             .color(0x5865F2),
     );
     if ctx
