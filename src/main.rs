@@ -5,6 +5,7 @@ mod commands {
     pub mod age;
     pub mod clear;
     pub mod help;
+    pub mod nightlord;
     pub mod overlay;
     pub mod summarize;
     pub mod translate;
@@ -945,6 +946,7 @@ async fn main() -> anyhow::Result<()> {
             commands: vec![
                 commands::age::age(),
                 commands::help::help(),
+                commands::nightlord::nightlord(),
                 commands::summarize::summarize(),
                 commands::translate::translate(),
                 commands::clear::clear(),
