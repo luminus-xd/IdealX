@@ -66,7 +66,7 @@ pub async fn overlay(_ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-/// このテキストチャンネルでオーバーレイを開始します
+/// このテキストチャンネルまたはVC内チャットでオーバーレイを開始します
 #[poise::command(slash_command, guild_only)]
 pub async fn start(
     ctx: Context<'_>,
@@ -78,8 +78,12 @@ pub async fn start(
     let Some((guild_id, channel_id, owner_user_id)) = authorized_scope(ctx).await? else {
         return Ok(());
     };
-    if !is_regular_text_channel(ctx).await? {
-        ephemeral(ctx, "通常のテキストチャンネルで実行してください。").await?;
+    if !is_supported_chat_channel(ctx).await? {
+        ephemeral(
+            ctx,
+            "通常のテキストチャンネルまたはVC内チャットで実行してください。",
+        )
+        .await?;
         return Ok(());
     }
 
@@ -136,11 +140,7 @@ pub async fn start(
         .send(poise::CreateReply::default().embed(embed).ephemeral(true))
         .await
     {
-        let _ = ctx
-            .data()
-            .overlay_hub
-            .end(owner_user_id, channel_id)
-            .await;
+        let _ = ctx.data().overlay_hub.end(owner_user_id, channel_id).await;
         return Err(error.into());
     }
     Ok(())
@@ -344,7 +344,7 @@ async fn authorized_scope(ctx: Context<'_>) -> Result<Option<(u64, u64, u64)>, E
         return Ok(None);
     }
     let Some(guild_id) = ctx.guild_id() else {
-        ephemeral(ctx, "サーバー内のテキストチャンネルで実行してください。").await?;
+        ephemeral(ctx, "サーバー内の対応チャンネルで実行してください。").await?;
         return Ok(None);
     };
     Ok(Some((
@@ -354,12 +354,19 @@ async fn authorized_scope(ctx: Context<'_>) -> Result<Option<(u64, u64, u64)>, E
     )))
 }
 
-async fn is_regular_text_channel(ctx: Context<'_>) -> Result<bool, Error> {
+async fn is_supported_chat_channel(ctx: Context<'_>) -> Result<bool, Error> {
     let channel = ctx.channel_id().to_channel(ctx.http()).await?;
     Ok(matches!(
         channel,
-        serenity::Channel::Guild(channel) if channel.kind == serenity::ChannelType::Text
+        serenity::Channel::Guild(channel) if is_supported_channel_type(channel.kind)
     ))
+}
+
+fn is_supported_channel_type(kind: serenity::ChannelType) -> bool {
+    matches!(
+        kind,
+        serenity::ChannelType::Text | serenity::ChannelType::Voice
+    )
 }
 
 async fn owns_current_session(
@@ -407,4 +414,23 @@ async fn ephemeral(ctx: Context<'_>, message: impl Into<String>) -> Result<(), E
     )
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_supported_channel_type;
+    use poise::serenity_prelude::ChannelType;
+
+    #[test]
+    fn text_and_voice_channels_support_overlay_sessions() {
+        assert!(is_supported_channel_type(ChannelType::Text));
+        assert!(is_supported_channel_type(ChannelType::Voice));
+    }
+
+    #[test]
+    fn non_chat_container_channels_are_rejected() {
+        assert!(!is_supported_channel_type(ChannelType::Category));
+        assert!(!is_supported_channel_type(ChannelType::Forum));
+        assert!(!is_supported_channel_type(ChannelType::Stage));
+    }
 }

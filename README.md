@@ -35,7 +35,7 @@ Anthropic Claude APIと連携して、メンションや特定のフォーラム
 - `ぬるぽ` → `ガッ`
 
 **OBSコメントオーバーレイ**
-- 指定したDiscordテキストチャンネルの新着コメントをOBS Browser Sourceへリアルタイム表示
+- 指定したDiscordテキストチャンネルまたはVC内チャットの新着コメントをOBS Browser Sourceへリアルタイム表示
 - 最大3件、10 / 20 / 30 / 60秒表示、Dark / Light / Compactテーマ
 - Bot・Webhook・添付のみ投稿を除外し、URL・制御文字・Bidi文字を安全化
 - 編集・削除・一括削除、WebSocket再接続、URLローテーションに対応
