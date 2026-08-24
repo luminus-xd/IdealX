@@ -21,7 +21,7 @@ pub async fn help(ctx: Context<'_>) -> Result<(), Error> {
             "`/age [ユーザー]` — アカウント作成日と経過日数を表示\n\
              `/summarize [件数]` — 直近のメッセージをAIで要約（最大50件）\n\
              `/translate [言語] [テキスト]` — テキストを指定言語に翻訳\n\
-             `/nightlord` — プルダウンで夜ボスを選んで夜の王を逆引き\n\
+             `/nightlord [公開]` — プルダウンで夜ボスを選んで夜の王を逆引き\n\
              `/clear` — このチャンネルの会話コンテキストをリセット\n\
              `/overlay` — OBS配信用コメントオーバーレイを操作\n\
              `/help` — このヘルプを表示",

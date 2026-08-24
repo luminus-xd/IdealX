@@ -647,7 +647,13 @@ fn build_components(
 
 /// 夜ボスをプルダウンで選び、3日目の夜の王を逆引きします
 #[poise::command(slash_command)]
-pub async fn nightlord(ctx: Context<'_>) -> Result<(), Error> {
+pub async fn nightlord(
+    ctx: Context<'_>,
+    #[description = "全員に公開して操作を許可する（既定: false）"]
+    #[rename = "公開"]
+    public: Option<bool>,
+) -> Result<(), Error> {
+    let is_public = public.unwrap_or(false);
     let session_id = ctx.id();
     let day_one_id = format!("nightlord:{session_id}:day-one");
     let day_two_id = format!("nightlord:{session_id}:day-two");
@@ -666,7 +672,8 @@ pub async fn nightlord(ctx: Context<'_>) -> Result<(), Error> {
                     day_one,
                     day_two,
                     false,
-                )),
+                ))
+                .ephemeral(!is_public),
         )
         .await?;
 
@@ -687,7 +694,7 @@ pub async fn nightlord(ctx: Context<'_>) -> Result<(), Error> {
             break;
         };
 
-        if interaction.user.id != ctx.author().id {
+        if !is_public && interaction.user.id != ctx.author().id {
             interaction
                 .create_response(
                     ctx.serenity_context(),
