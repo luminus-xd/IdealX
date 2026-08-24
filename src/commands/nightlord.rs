@@ -1,4 +1,6 @@
-use poise::serenity_prelude::CreateEmbed;
+use std::time::Duration;
+
+use poise::serenity_prelude::{self as serenity, CreateEmbed};
 
 use crate::Data;
 
@@ -7,6 +9,7 @@ type Context<'a> = poise::Context<'a, Data, Error>;
 
 const SOURCE_URL: &str =
     "https://kamikouryaku.net/nightreign_eldenring/?%E5%A4%9C%E3%81%AE%E7%8E%8B";
+const PANEL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, poise::ChoiceParameter)]
 pub enum DayOneBoss {
@@ -49,6 +52,27 @@ pub enum DayOneBoss {
 }
 
 impl DayOneBoss {
+    const ALL: [Self; 18] = [
+        Self::DemiHumanQueens,
+        Self::BellBearingHunter,
+        Self::GapingDragon,
+        Self::NightsCavalry,
+        Self::ValiantGargoyle,
+        Self::Wormface,
+        Self::DukesDearFreyja,
+        Self::CentipedeDemon,
+        Self::SmelterDemon,
+        Self::BattlefieldCommander,
+        Self::TibiaMariner,
+        Self::RoyalRevenant,
+        Self::UlceratedTreeSpirit,
+        Self::GraftedMonarch,
+        Self::WoundedDemons,
+        Self::CursebladeAndDivineBeastWarrior,
+        Self::GreatRedBear,
+        Self::DeathKnight,
+    ];
+
     fn label(self) -> &'static str {
         match self {
             Self::DemiHumanQueens => "亜人の女王＆亜人の剣聖",
@@ -80,6 +104,10 @@ impl DayOneBoss {
                 | Self::GreatRedBear
                 | Self::DeathKnight
         )
+    }
+
+    fn from_value(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|boss| boss.label() == value)
     }
 }
 
@@ -122,6 +150,26 @@ pub enum DayTwoBoss {
 }
 
 impl DayTwoBoss {
+    const ALL: [Self; 17] = [
+        Self::TreeSentinels,
+        Self::FellOmen,
+        Self::AncientDragon,
+        Self::CommanderONeil,
+        Self::CrucibleKnightAndHippo,
+        Self::DraconicTreeSentinels,
+        Self::NoxDragonkinSoldier,
+        Self::GreatWyrm,
+        Self::GodskinDuo,
+        Self::FallingstarBeast,
+        Self::DeathRiteBird,
+        Self::NamelessKing,
+        Self::Dancer,
+        Self::DemonPrince,
+        Self::LordOfBlood,
+        Self::DivineBeastDancingLion,
+        Self::KnightArtorias,
+    ];
+
     fn label(self) -> &'static str {
         match self {
             Self::TreeSentinels => "ツリーガード＆王都の騎兵",
@@ -152,6 +200,10 @@ impl DayTwoBoss {
                 | Self::DivineBeastDancingLion
                 | Self::KnightArtorias
         )
+    }
+
+    fn from_value(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|boss| boss.label() == value)
     }
 }
 
@@ -498,58 +550,16 @@ fn selected_candidates(day_one: Option<DayOneBoss>, day_two: Option<DayTwoBoss>)
     }
 }
 
-/// 1日目・2日目の夜ボスから3日目の夜の王を逆引きします
-#[poise::command(slash_command)]
-pub async fn nightlord(
-    ctx: Context<'_>,
-    #[description = "1日目の夜ボス（どちらか一方だけでも検索できます）"] day_one: Option<
-        DayOneBoss,
-    >,
-    #[description = "2日目の夜ボス（どちらか一方だけでも検索できます）"] day_two: Option<
-        DayTwoBoss,
-    >,
-) -> Result<(), Error> {
+fn build_embed(day_one: Option<DayOneBoss>, day_two: Option<DayTwoBoss>) -> CreateEmbed {
     let candidates = selected_candidates(day_one, day_two);
-    let (title, result_text, color) = match (day_one, day_two, candidates.as_slice()) {
-        (None, None, _) => (
-            "🌙 夜ボスを選択してください",
-            "1日目または2日目の夜ボスを、少なくとも一方選択してください。".to_string(),
-            0xFEE75C,
-        ),
-        (_, _, []) => (
-            "🌙 夜の王を特定できません",
-            "神攻略Wikiの組み合わせ表に掲載されていません。選択内容を確認してください。"
-                .to_string(),
-            0xED4245,
-        ),
-        (_, _, [nightlord]) => (
-            "🌙 夜の王が判明しました",
-            format!("**確定**\n{}", nightlord.label()),
-            0x57F287,
-        ),
-        (_, _, nightlords) => (
-            "🌙 夜の王候補",
-            format!(
-                "この組み合わせだけでは確定できません。\n{}",
-                nightlords
-                    .iter()
-                    .map(|nightlord| format!("• {}", nightlord.label()))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ),
-            0xFEE75C,
-        ),
+    let (title, color) = match (day_one, day_two, candidates.len()) {
+        (None, None, _) => ("🌙 夜の王を逆引き", 0x5865F2),
+        (_, _, 0) => ("🌙 該当なし", 0xED4245),
+        (_, _, 1) => ("🌙 夜の王", 0x57F287),
+        _ => ("🌙 夜の王候補", 0xFEE75C),
     };
 
-    let mut embed = CreateEmbed::new()
-        .title(title)
-        .description(format!(
-            "[神攻略Wiki「夜の王」]({SOURCE_URL}) の逆引き表を参照"
-        ))
-        .footer(poise::serenity_prelude::CreateEmbedFooter::new(
-            "通常個体／常夜の王の判別は含みません",
-        ))
-        .color(color);
+    let mut embed = CreateEmbed::new().title(title).url(SOURCE_URL).color(color);
 
     if let Some(day_one) = day_one {
         embed = embed.field("1日目夜", day_one.label(), true);
@@ -557,9 +567,175 @@ pub async fn nightlord(
     if let Some(day_two) = day_two {
         embed = embed.field("2日目夜", day_two.label(), true);
     }
-    embed = embed.field("3日目の標的", result_text, false);
 
-    ctx.send(poise::CreateReply::default().embed(embed)).await?;
+    match candidates.as_slice() {
+        [] if day_one.is_none() && day_two.is_none() => {
+            embed.description("1日目または2日目の夜ボスを選択してください。")
+        }
+        [] => embed.field("結果", "該当する組み合わせがありません。", false),
+        [nightlord] => embed.field("3日目", nightlord.label(), false),
+        nightlords => embed.field(
+            format!("候補（{}体）", nightlords.len()),
+            nightlords
+                .iter()
+                .map(|nightlord| format!("• {}", nightlord.label()))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            false,
+        ),
+    }
+}
+
+fn build_components(
+    day_one_id: &str,
+    day_two_id: &str,
+    reset_id: &str,
+    day_one: Option<DayOneBoss>,
+    day_two: Option<DayTwoBoss>,
+    disabled: bool,
+) -> Vec<serenity::CreateActionRow> {
+    let day_one_options = DayOneBoss::ALL
+        .into_iter()
+        .map(|boss| {
+            serenity::CreateSelectMenuOption::new(boss.label(), boss.label())
+                .default_selection(Some(boss) == day_one)
+        })
+        .collect();
+    let day_two_options = DayTwoBoss::ALL
+        .into_iter()
+        .map(|boss| {
+            serenity::CreateSelectMenuOption::new(boss.label(), boss.label())
+                .default_selection(Some(boss) == day_two)
+        })
+        .collect();
+
+    vec![
+        serenity::CreateActionRow::SelectMenu(
+            serenity::CreateSelectMenu::new(
+                day_one_id,
+                serenity::CreateSelectMenuKind::String {
+                    options: day_one_options,
+                },
+            )
+            .placeholder(
+                day_one
+                    .map(|boss| format!("1日目：{}", boss.label()))
+                    .unwrap_or_else(|| "1日目の夜ボスを選択".to_string()),
+            )
+            .disabled(disabled),
+        ),
+        serenity::CreateActionRow::SelectMenu(
+            serenity::CreateSelectMenu::new(
+                day_two_id,
+                serenity::CreateSelectMenuKind::String {
+                    options: day_two_options,
+                },
+            )
+            .placeholder(
+                day_two
+                    .map(|boss| format!("2日目：{}", boss.label()))
+                    .unwrap_or_else(|| "2日目の夜ボスを選択".to_string()),
+            )
+            .disabled(disabled),
+        ),
+        serenity::CreateActionRow::Buttons(vec![serenity::CreateButton::new(reset_id)
+            .label("リセット")
+            .style(serenity::ButtonStyle::Secondary)
+            .disabled(disabled || (day_one.is_none() && day_two.is_none()))]),
+    ]
+}
+
+/// 夜ボスをプルダウンで選び、3日目の夜の王を逆引きします
+#[poise::command(slash_command)]
+pub async fn nightlord(ctx: Context<'_>) -> Result<(), Error> {
+    let session_id = ctx.id();
+    let day_one_id = format!("nightlord:{session_id}:day-one");
+    let day_two_id = format!("nightlord:{session_id}:day-two");
+    let reset_id = format!("nightlord:{session_id}:reset");
+    let mut day_one = None;
+    let mut day_two = None;
+
+    let reply = ctx
+        .send(
+            poise::CreateReply::default()
+                .embed(build_embed(day_one, day_two))
+                .components(build_components(
+                    &day_one_id,
+                    &day_two_id,
+                    &reset_id,
+                    day_one,
+                    day_two,
+                    false,
+                ))
+                .ephemeral(true),
+        )
+        .await?;
+
+    let deadline = tokio::time::Instant::now() + PANEL_TIMEOUT;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+
+        let valid_ids = [day_one_id.clone(), day_two_id.clone(), reset_id.clone()];
+        let Some(interaction) = serenity::ComponentInteractionCollector::new(ctx)
+            .author_id(ctx.author().id)
+            .channel_id(ctx.channel_id())
+            .timeout(remaining)
+            .filter(move |interaction| valid_ids.contains(&interaction.data.custom_id))
+            .await
+        else {
+            break;
+        };
+
+        if interaction.data.custom_id == reset_id {
+            day_one = None;
+            day_two = None;
+        } else if let serenity::ComponentInteractionDataKind::StringSelect { values } =
+            &interaction.data.kind
+        {
+            let value = values.first().map(String::as_str);
+            if interaction.data.custom_id == day_one_id {
+                day_one = value.and_then(DayOneBoss::from_value);
+            } else if interaction.data.custom_id == day_two_id {
+                day_two = value.and_then(DayTwoBoss::from_value);
+            }
+        }
+
+        interaction
+            .create_response(
+                ctx.serenity_context(),
+                serenity::CreateInteractionResponse::UpdateMessage(
+                    serenity::CreateInteractionResponseMessage::new()
+                        .embed(build_embed(day_one, day_two))
+                        .components(build_components(
+                            &day_one_id,
+                            &day_two_id,
+                            &reset_id,
+                            day_one,
+                            day_two,
+                            false,
+                        )),
+                ),
+            )
+            .await?;
+    }
+
+    reply
+        .edit(
+            ctx,
+            poise::CreateReply::default().components(build_components(
+                &day_one_id,
+                &day_two_id,
+                &reset_id,
+                day_one,
+                day_two,
+                true,
+            )),
+        )
+        .await?;
+
     Ok(())
 }
 
@@ -632,5 +808,42 @@ mod tests {
     #[test]
     fn requires_at_least_one_night_boss() {
         assert!(selected_candidates(None, None).is_empty());
+    }
+
+    #[test]
+    fn component_panel_has_two_selects_and_a_reset_button() {
+        let components = build_components("day-one", "day-two", "reset", None, None, false);
+        let json = serde_json::to_value(components).expect("components should serialize");
+
+        assert_eq!(json.as_array().map(Vec::len), Some(3));
+        assert_eq!(json[0]["components"][0]["type"], 3);
+        assert_eq!(
+            json[0]["components"][0]["options"].as_array().map(Vec::len),
+            Some(18)
+        );
+        assert_eq!(json[1]["components"][0]["type"], 3);
+        assert_eq!(
+            json[1]["components"][0]["options"].as_array().map(Vec::len),
+            Some(17)
+        );
+        assert_eq!(json[2]["components"][0]["type"], 2);
+    }
+
+    #[test]
+    fn select_values_round_trip_to_bosses() {
+        for boss in DayOneBoss::ALL {
+            assert_eq!(DayOneBoss::from_value(boss.label()), Some(boss));
+        }
+        for boss in DayTwoBoss::ALL {
+            assert_eq!(DayTwoBoss::from_value(boss.label()), Some(boss));
+        }
+    }
+
+    #[test]
+    fn result_embed_does_not_include_the_removed_footer() {
+        let embed = build_embed(Some(DayOneBoss::BellBearingHunter), None);
+        let json = serde_json::to_value(embed).expect("embed should serialize");
+
+        assert!(json.get("footer").is_none());
     }
 }
