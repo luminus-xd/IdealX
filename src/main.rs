@@ -6,6 +6,7 @@ mod commands {
     pub mod clear;
     pub mod help;
     pub mod nightlord;
+    pub mod nightslot;
     pub mod overlay;
     pub mod summarize;
     pub mod translate;
@@ -947,6 +948,7 @@ async fn main() -> anyhow::Result<()> {
                 commands::age::age(),
                 commands::help::help(),
                 commands::nightlord::nightlord(),
+                commands::nightslot::nightslot(),
                 commands::summarize::summarize(),
                 commands::translate::translate(),
                 commands::clear::clear(),
