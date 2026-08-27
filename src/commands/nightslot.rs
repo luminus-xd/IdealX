@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use poise::serenity_prelude::{self as serenity, CreateEmbed, UserId};
-use rand::Rng;
+use rand::{seq::SliceRandom, Rng};
 
 use crate::Data;
 
@@ -74,11 +74,23 @@ fn candidates(include_dlc: bool) -> &'static [Nightfarer] {
     }
 }
 
-fn spin<R: Rng + ?Sized>(rng: &mut R, include_dlc: bool, party_size: usize) -> Vec<Nightfarer> {
+fn spin<R: Rng + ?Sized>(
+    rng: &mut R,
+    include_dlc: bool,
+    party_size: usize,
+    allow_duplicates: bool,
+) -> Vec<Nightfarer> {
     let candidates = candidates(include_dlc);
-    (0..party_size)
-        .map(|_| candidates[rng.gen_range(0..candidates.len())])
-        .collect()
+    if allow_duplicates {
+        (0..party_size)
+            .map(|_| candidates[rng.gen_range(0..candidates.len())])
+            .collect()
+    } else {
+        candidates
+            .choose_multiple(rng, party_size)
+            .copied()
+            .collect()
+    }
 }
 
 fn pool_label(include_dlc: bool) -> &'static str {
@@ -89,7 +101,15 @@ fn pool_label(include_dlc: bool) -> &'static str {
     }
 }
 
-fn build_setup_embed(include_dlc: bool, timed_out: bool) -> CreateEmbed {
+fn duplicate_label(allow_duplicates: bool) -> &'static str {
+    if allow_duplicates {
+        "重複あり"
+    } else {
+        "重複なし"
+    }
+}
+
+fn build_setup_embed(include_dlc: bool, allow_duplicates: bool, timed_out: bool) -> CreateEmbed {
     let (description, color) = if timed_out {
         (
             "ユーザー選択の受付を終了しました。もう一度 `/nightslot` を実行してください。",
@@ -107,8 +127,9 @@ fn build_setup_embed(include_dlc: bool, timed_out: bool) -> CreateEmbed {
         .description(description)
         .color(color)
         .footer(serenity::CreateEmbedFooter::new(format!(
-            "抽選対象: {} / 操作できるのはコマンド実行者のみ",
-            pool_label(include_dlc)
+            "抽選対象: {} / {} / 操作できるのはコマンド実行者のみ",
+            pool_label(include_dlc),
+            duplicate_label(allow_duplicates)
         )))
 }
 
@@ -132,6 +153,7 @@ fn build_slot_embed(
     slots: &[Nightfarer],
     stopped: usize,
     include_dlc: bool,
+    allow_duplicates: bool,
 ) -> CreateEmbed {
     debug_assert_eq!(players.len(), slots.len());
 
@@ -162,26 +184,31 @@ fn build_slot_embed(
         .description(slot_lines)
         .color(if completed { 0xD4AF37 } else { 0x5865F2 })
         .footer(poise::serenity_prelude::CreateEmbedFooter::new(format!(
-            "抽選対象: {} / 同じキャラが重複することがあります",
-            pool_label(include_dlc)
+            "抽選対象: {} / {}",
+            pool_label(include_dlc),
+            duplicate_label(allow_duplicates)
         )))
 }
 
-/// ナイトレインの3人パーティをスロットで決めます
+/// ナイトレインの2〜3人パーティをスロットで決めます
 #[poise::command(slash_command)]
 pub async fn nightslot(
     ctx: Context<'_>,
     #[description = "学者・葬儀屋を抽選に含める（既定: true）"]
     #[rename = "dlc"]
     include_dlc: Option<bool>,
+    #[description = "同じキャラの重複を許可する（既定: false）"]
+    #[rename = "重複"]
+    allow_duplicates: Option<bool>,
 ) -> Result<(), Error> {
     let include_dlc = include_dlc.unwrap_or(true);
+    let allow_duplicates = allow_duplicates.unwrap_or(false);
     let user_select_id = format!("nightslot:{}:users", ctx.id());
 
     let reply = ctx
         .send(
             poise::CreateReply::default()
-                .embed(build_setup_embed(include_dlc, false))
+                .embed(build_setup_embed(include_dlc, allow_duplicates, false))
                 .components(build_user_select(&user_select_id, false)),
         )
         .await?;
@@ -239,7 +266,7 @@ pub async fn nightslot(
         let frames = {
             let mut rng = rand::thread_rng();
             (0..=players.len())
-                .map(|_| spin(&mut rng, include_dlc, players.len()))
+                .map(|_| spin(&mut rng, include_dlc, players.len(), allow_duplicates))
                 .collect::<Vec<_>>()
         };
         let result = frames[players.len()].clone();
@@ -249,7 +276,13 @@ pub async fn nightslot(
                 ctx.serenity_context(),
                 serenity::CreateInteractionResponse::UpdateMessage(
                     serenity::CreateInteractionResponseMessage::new()
-                        .embed(build_slot_embed(&players, &frames[0], 0, include_dlc))
+                        .embed(build_slot_embed(
+                            &players,
+                            &frames[0],
+                            0,
+                            include_dlc,
+                            allow_duplicates,
+                        ))
                         .components(Vec::new()),
                 ),
             )
@@ -264,7 +297,13 @@ pub async fn nightslot(
                 .edit(
                     ctx,
                     poise::CreateReply::default()
-                        .embed(build_slot_embed(&players, &slots, stopped, include_dlc))
+                        .embed(build_slot_embed(
+                            &players,
+                            &slots,
+                            stopped,
+                            include_dlc,
+                            allow_duplicates,
+                        ))
                         .components(Vec::new()),
                 )
                 .await?;
@@ -278,7 +317,7 @@ pub async fn nightslot(
             .edit(
                 ctx,
                 poise::CreateReply::default()
-                    .embed(build_setup_embed(include_dlc, true))
+                    .embed(build_setup_embed(include_dlc, allow_duplicates, true))
                     .components(build_user_select(&user_select_id, true)),
             )
             .await?;
@@ -297,7 +336,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(42);
 
         for _ in 0..100 {
-            assert!(spin(&mut rng, false, 3)
+            assert!(spin(&mut rng, false, 3, false)
                 .into_iter()
                 .all(|nightfarer| Nightfarer::BASE_GAME.contains(&nightfarer)));
         }
@@ -307,8 +346,20 @@ mod tests {
     fn spin_supports_two_and_three_player_parties() {
         let mut rng = StdRng::seed_from_u64(42);
 
-        assert_eq!(spin(&mut rng, true, 2).len(), 2);
-        assert_eq!(spin(&mut rng, true, 3).len(), 3);
+        assert_eq!(spin(&mut rng, true, 2, false).len(), 2);
+        assert_eq!(spin(&mut rng, true, 3, false).len(), 3);
+    }
+
+    #[test]
+    fn spin_without_duplicates_returns_unique_characters() {
+        let mut rng = StdRng::seed_from_u64(42);
+
+        for _ in 0..100 {
+            let party = spin(&mut rng, true, 3, false);
+            for (index, nightfarer) in party.iter().enumerate() {
+                assert!(!party[..index].contains(nightfarer));
+            }
+        }
     }
 
     #[test]

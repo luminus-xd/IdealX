@@ -22,7 +22,7 @@ pub async fn help(ctx: Context<'_>) -> Result<(), Error> {
              `/summarize [件数]` — 直近のメッセージをAIで要約（最大50件）\n\
              `/translate [言語] [テキスト]` — テキストを指定言語に翻訳\n\
              `/nightlord [公開]` — プルダウンで夜ボスを選んで夜の王を逆引き\n\
-             `/nightslot [dlc]` — 2〜3人を選び、キャラをスロットで割り当て\n\
+             `/nightslot [dlc] [重複]` — 2〜3人を選び、キャラをスロットで割り当て\n\
              `/clear` — このチャンネルの会話コンテキストをリセット\n\
              `/overlay` — OBS配信用コメントオーバーレイを操作\n\
              `/help` — このヘルプを表示",
