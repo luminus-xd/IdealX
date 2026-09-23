@@ -10,7 +10,7 @@ type Context<'a> = poise::Context<'a, Data, Error>;
 
 const SLOT_DELAY: Duration = Duration::from_millis(700);
 const PANEL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-const SCHOLAR_PROBABILITY: f64 = 0.03;
+const SCHOLAR_PROBABILITY: f64 = 0.01;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Nightfarer {
@@ -394,7 +394,7 @@ mod tests {
     }
 
     #[test]
-    fn scholar_probability_is_three_percent_for_each_player() {
+    fn scholar_probability_is_one_percent_for_each_player() {
         let mut rng = StdRng::seed_from_u64(42);
         let trials = 100_000;
 
@@ -417,9 +417,9 @@ mod tests {
                 for player_counts in counts {
                     for (nightfarer, count) in Nightfarer::ALL.iter().zip(player_counts) {
                         let expected = if *nightfarer == Nightfarer::Scholar {
-                            0.03
+                            0.01
                         } else {
-                            0.97 / 9.0
+                            0.99 / 9.0
                         };
                         let actual = count as f64 / trials as f64;
                         assert!(
