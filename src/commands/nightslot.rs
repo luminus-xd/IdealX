@@ -10,6 +10,7 @@ type Context<'a> = poise::Context<'a, Data, Error>;
 
 const SLOT_DELAY: Duration = Duration::from_millis(700);
 const PANEL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const SCHOLAR_PROBABILITY: f64 = 0.03;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Nightfarer {
@@ -81,6 +82,36 @@ fn spin<R: Rng + ?Sized>(
     allow_duplicates: bool,
 ) -> Vec<Nightfarer> {
     let candidates = candidates(include_dlc);
+    if include_dlc {
+        let others = candidates
+            .iter()
+            .copied()
+            .filter(|nightfarer| *nightfarer != Nightfarer::Scholar)
+            .collect::<Vec<_>>();
+
+        if allow_duplicates {
+            return (0..party_size)
+                .map(|_| {
+                    if rng.gen_bool(SCHOLAR_PROBABILITY) {
+                        Nightfarer::Scholar
+                    } else {
+                        others[rng.gen_range(0..others.len())]
+                    }
+                })
+                .collect();
+        }
+
+        let mut party = others
+            .choose_multiple(rng, party_size)
+            .copied()
+            .collect::<Vec<_>>();
+        if !party.is_empty() && rng.gen_bool(SCHOLAR_PROBABILITY * party.len() as f64) {
+            let index = rng.gen_range(0..party.len());
+            party[index] = Nightfarer::Scholar;
+        }
+        return party;
+    }
+
     if allow_duplicates {
         (0..party_size)
             .map(|_| candidates[rng.gen_range(0..candidates.len())])
@@ -358,6 +389,45 @@ mod tests {
             let party = spin(&mut rng, true, 3, false);
             for (index, nightfarer) in party.iter().enumerate() {
                 assert!(!party[..index].contains(nightfarer));
+            }
+        }
+    }
+
+    #[test]
+    fn scholar_probability_is_three_percent_for_each_player() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let trials = 100_000;
+
+        for allow_duplicates in [false, true] {
+            for party_size in [2, 3] {
+                let mut counts = vec![[0; 10]; party_size];
+                for _ in 0..trials {
+                    for (index, nightfarer) in spin(&mut rng, true, party_size, allow_duplicates)
+                        .into_iter()
+                        .enumerate()
+                    {
+                        let character = Nightfarer::ALL
+                            .iter()
+                            .position(|candidate| *candidate == nightfarer)
+                            .unwrap();
+                        counts[index][character] += 1;
+                    }
+                }
+
+                for player_counts in counts {
+                    for (nightfarer, count) in Nightfarer::ALL.iter().zip(player_counts) {
+                        let expected = if *nightfarer == Nightfarer::Scholar {
+                            0.03
+                        } else {
+                            0.97 / 9.0
+                        };
+                        let actual = count as f64 / trials as f64;
+                        assert!(
+                            (actual - expected).abs() < 0.004,
+                            "{nightfarer:?}: {actual}, party_size={party_size}, duplicates={allow_duplicates}"
+                        );
+                    }
+                }
             }
         }
     }
