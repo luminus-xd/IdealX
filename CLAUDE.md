@@ -44,7 +44,7 @@ cargo run
 
 ### Core Framework Stack
 - **Discord Integration**: Serenity framework with Poise command system
-- **AI Integration**: Anthropic Claude API (claude-sonnet-4-20250514)
+- **AI Integration**: Anthropic Claude API (claude-opus-5-5)
 - **Async Runtime**: Tokio
 - **Hosting**: Railway platform
 

@@ -6,7 +6,7 @@ Anthropic Claude APIと連携して、メンションや特定のフォーラム
 ## 機能
 
 **AI応答**
-- メンションすると直近の会話コンテキストを読み取り、Claude（claude-sonnet-4-6）が回答
+- メンションすると直近の会話コンテキストを読み取り、Claude Opus 5.5（claude-opus-5-5）が回答
 - フォーラムチャンネルでの投稿にはメンションなしで自動応答
 - ウェブ検索ツール連携で最新情報も参照可能
 - 2000文字を超えるレスポンスは自動で分割送信
@@ -107,6 +107,6 @@ cargo clippy
 
 - **言語**: Rust (edition 2021)
 - **Discordフレームワーク**: Serenity + Poise
-- **AI**: Anthropic Claude API（claude-sonnet-4-6）
+- **AI**: Anthropic Claude API（claude-opus-5-5）
 - **非同期ランタイム**: Tokio
 - **ホスティング**: Railway

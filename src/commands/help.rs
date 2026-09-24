@@ -34,7 +34,7 @@ pub async fn help(ctx: Context<'_>) -> Result<(), Error> {
             false,
         )
         .footer(serenity::CreateEmbedFooter::new(
-            "Powered by Claude claude-sonnet-4-6",
+            "Powered by Claude Opus 5.5",
         ));
 
     ctx.send(poise::CreateReply::default().embed(embed)).await?;
