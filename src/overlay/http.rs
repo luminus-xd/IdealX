@@ -18,6 +18,7 @@ use tokio::sync::{broadcast, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 use super::{hub::OverlayHub, model::OverlayEvent};
+use crate::artifact::store::ArtifactStore;
 
 const OVERLAY_HTML: &str = include_str!("../../assets/overlay.html");
 const OVERLAY_CSS: &str = include_str!("../../assets/overlay.css");
@@ -43,9 +44,14 @@ struct AuthMessage {
 pub async fn serve(
     listener: tokio::net::TcpListener,
     hub: Arc<OverlayHub>,
+    artifacts: Option<Arc<ArtifactStore>>,
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
-    let app = router(hub);
+    let mut app = router(hub);
+    if let Some(store) = artifacts {
+        // アーティファクトは独自の CSP を持つので、オーバーレイ用ヘッダー層の外側で合流させる
+        app = app.merge(crate::artifact::http::router(store));
+    }
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown.cancelled_owned())

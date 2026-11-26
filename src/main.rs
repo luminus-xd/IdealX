@@ -1,3 +1,4 @@
+mod artifact;
 mod claude;
 mod overlay;
 
@@ -12,7 +13,11 @@ mod commands {
     pub mod translate;
 }
 
-use claude::{get_claude_response, split_message, ContentBlock, MessageContent, RequestMessage};
+use artifact::{config::ArtifactConfig, store::ArtifactStore};
+use claude::{
+    get_claude_reply, get_claude_response, split_message, ContentBlock, MessageContent,
+    RequestMessage,
+};
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -29,7 +34,9 @@ static URL_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"https?://[^\s<>"
 use poise::{serenity_prelude as serenity, serenity_prelude::ActivityData};
 
 use serenity::async_trait;
-use serenity::builder::{CreateEmbed, CreateEmbedFooter, CreateMessage};
+use serenity::builder::{
+    CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter, CreateMessage,
+};
 use serenity::model::channel::{Message, Reaction, ReactionType};
 use serenity::model::event::MessageUpdateEvent;
 use serenity::model::gateway::Ready;
@@ -71,6 +78,30 @@ struct Bot {
     target_forum_channel_ids: Arc<Vec<u64>>,
     reset_times: ResetTimes,
     overlay_hub: Arc<OverlayHub>,
+    /// アーティファクト機能が無効なら None
+    artifact_store: Option<Arc<ArtifactStore>>,
+}
+
+/// 作成されたアーティファクトを開くリンクボタン（1行最大5個、最大5行）
+fn artifact_buttons(artifacts: &[artifact::store::ArtifactLink]) -> Vec<CreateActionRow> {
+    const LABEL_MAX_CHARS: usize = 80;
+    artifacts
+        .chunks(5)
+        .take(5)
+        .map(|row| {
+            CreateActionRow::Buttons(
+                row.iter()
+                    .map(|link| {
+                        let label: String = format!("🔗 {}", link.title)
+                            .chars()
+                            .take(LABEL_MAX_CHARS)
+                            .collect();
+                        CreateButton::new_link(&link.url).label(label)
+                    })
+                    .collect(),
+            )
+        })
+        .collect()
 }
 
 /// 添付ファイルが画像かどうかを判定する関数
@@ -526,15 +557,16 @@ impl Bot {
 
         // タイピング中の表示を開始
         let _typing = msg.channel_id.start_typing(&ctx.http);
-        let claude_message = match get_claude_response(
+        let reply = match get_claude_reply(
             request_body,
             &self.claude_token,
             &self.client,
             Some(SYSTEM_PROMPT),
+            self.artifact_store.as_deref(),
         )
         .await
         {
-            Ok(text) => text,
+            Ok(reply) => reply,
             Err(e) => {
                 error!("Error Claude response: {}", e);
                 let error_embed = CreateEmbed::new()
@@ -551,6 +583,16 @@ impl Bot {
                 return;
             }
         };
+
+        let mut claude_message = reply.text;
+        if claude_message.trim().is_empty() {
+            // 空の Embed は送れないので、ページだけ作られた場合などに備えて一言添える
+            claude_message = if reply.artifacts.is_empty() {
+                "（応答を生成できませんでした）".to_string()
+            } else {
+                "ページを作ったよ。下のボタンから開けます。".to_string()
+            };
+        }
 
         // 最初のチャンクをEmbedで送信（最大4000文字）、超過分はプレーンテキストで続送
         const EMBED_MAX_CHARS: usize = 4000;
@@ -575,6 +617,9 @@ impl Bot {
         let mut create_msg = CreateMessage::new().embed(embed);
         if is_inclued_bot_mention(ctx, msg) {
             create_msg = create_msg.content(format!("<@{}>", msg.author.id));
+        }
+        if !reply.artifacts.is_empty() {
+            create_msg = create_msg.components(artifact_buttons(&reply.artifacts));
         }
 
         if let Err(why) = msg.channel_id.send_message(&ctx.http, create_msg).await {
@@ -933,6 +978,22 @@ async fn main() -> anyhow::Result<()> {
         Duration::from_secs(overlay_config.session_ttl_minutes.saturating_mul(60)),
     ));
 
+    let artifact_config = ArtifactConfig::from_env()?;
+    let artifact_store = artifact_config.enabled.then(|| {
+        Arc::new(ArtifactStore::new(
+            artifact_config.public_base_url.clone(),
+            Duration::from_secs(artifact_config.ttl_hours.saturating_mul(3600)),
+        ))
+    });
+    info!(
+        "Artifact feature is {}",
+        if artifact_store.is_some() {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+
     // Bot と Poise Data で共有するリセット時刻マップ
     let reset_times: ResetTimes = Arc::new(RwLock::new(HashMap::new()));
 
@@ -1001,6 +1062,7 @@ async fn main() -> anyhow::Result<()> {
         target_forum_channel_ids,
         reset_times,
         overlay_hub: overlay_hub.clone(),
+        artifact_store: artifact_store.clone(),
     };
 
     info!("Creating Discord client with bot handler and framework...");
@@ -1021,7 +1083,9 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Starting Discord client...");
 
-    let overlay_listener = if overlay_config.enabled {
+    // オーバーレイかアーティファクトのどちらかが有効なら HTTP サーバーを立てる
+    let http_enabled = overlay_config.enabled || artifact_store.is_some();
+    let overlay_listener = if http_enabled {
         Some(tokio::net::TcpListener::bind(overlay_config.listen_addr).await?)
     } else {
         None
@@ -1032,8 +1096,14 @@ async fn main() -> anyhow::Result<()> {
     let overlay_server = async move {
         match overlay_listener {
             Some(listener) => {
-                info!("Overlay HTTP/WSS server started");
-                overlay::http::serve(listener, overlay_server_hub, overlay_server_shutdown).await
+                info!("HTTP/WSS server started");
+                overlay::http::serve(
+                    listener,
+                    overlay_server_hub,
+                    artifact_store,
+                    overlay_server_shutdown,
+                )
+                .await
             }
             None => std::future::pending::<anyhow::Result<()>>().await,
         }
@@ -1091,7 +1161,7 @@ async fn main() -> anyhow::Result<()> {
 
     overlay_shutdown.cancel();
     client.shard_manager.shutdown_all().await;
-    if overlay_config.enabled
+    if http_enabled
         && !overlay_server_finished
         && tokio::time::timeout(Duration::from_secs(5), &mut overlay_server)
             .await
