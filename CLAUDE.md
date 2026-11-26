@@ -51,6 +51,7 @@ cargo run
 ### Key Modules
 - `src/main.rs`: Main bot logic, event handlers, and main runtime
 - `src/claude.rs`: Claude API client with message splitting utilities
+- `src/artifact/`: In-memory store and HTTP route for Claude-generated HTML pages ("artifacts")
 - `src/commands/`: Bot slash commands (example: age calculation)
 
 ### Configuration
@@ -59,6 +60,7 @@ cargo run
   - `CLAUDE_TOKEN`: Anthropic Claude API token
   - `TARGET_SERVER_IDS`: Comma-separated list of Discord server IDs for auto-response
   - `TARGET_FORUM_CHANNEL_IDS`: Comma-separated list of forum channel IDs for auto-response
+  - `ARTIFACT_ENABLED` / `ARTIFACT_PUBLIC_BASE_URL` / `ARTIFACT_TTL_HOURS`: Optional. Lets Claude publish standalone HTML pages via the `create_artifact` tool (in-memory, served at `/a/{id}` under a CSP sandbox)
 - Auto-response is enabled for specific forum channels defined in `TARGET_FORUM_CHANNEL_IDS`
 
 ## Bot Features

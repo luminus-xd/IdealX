@@ -69,6 +69,11 @@ export OVERLAY_PUBLIC_BASE_URL="https://your-service.example.com"
 export OVERLAY_ALLOWED_OWNER_IDS="discord_user_id1,discord_user_id2"
 export OVERLAY_DEFAULT_DISPLAY_SECONDS="20"
 export OVERLAY_SESSION_TTL_MINUTES="480"
+
+# アーティファクト（Claudeが作ったHTMLページを公開URLで配信する場合）
+export ARTIFACT_ENABLED="true"
+export ARTIFACT_PUBLIC_BASE_URL="https://your-service.example.com"  # 省略時は OVERLAY_PUBLIC_BASE_URL
+export ARTIFACT_TTL_HOURS="24"
 export PORT="3000"
 cargo run
 ```
@@ -88,7 +93,18 @@ cargo run
    - `OVERLAY_ALLOWED_OWNER_IDS`（操作を許可するDiscordユーザーID、カンマ区切り）
    - `OVERLAY_DEFAULT_DISPLAY_SECONDS`（任意、10 / 20 / 30 / 60、既定20）
    - `OVERLAY_SESSION_TTL_MINUTES`（任意、既定480）
+   - `ARTIFACT_ENABLED=true`（アーティファクトを利用する場合）
+   - `ARTIFACT_PUBLIC_BASE_URL`（任意、RailwayのHTTPS公開オリジン。省略時は `OVERLAY_PUBLIC_BASE_URL`）
+   - `ARTIFACT_TTL_HOURS`（任意、既定24）
 3. `git push` するだけで自動デプロイ
+
+### アーティファクトについて
+
+`ARTIFACT_ENABLED=true` にすると、メンションへの応答でClaudeが `create_artifact` ツールを使えるようになります。表やグラフ、ミニゲームなどをHTMLページとして作り、`https://<公開オリジン>/a/<ランダムID>` で配信して、Discordにはリンクボタン付きで返信します。リンクを知っていれば誰でも開けます。
+
+- ページはメモリに保存されるので、再デプロイや再起動で消えます。有効期限は `ARTIFACT_TTL_HOURS` です。
+- 保持数は最大200件、合計64MiBまでで、超えると古い順に消えます。1ページは512KiBまでです。
+- bot と同じドメインで配信するため、`Content-Security-Policy: sandbox`（`allow-same-origin` なし）でページを不透明オリジンに隔離しています。ページのスクリプトはCookie・ストレージ・オーバーレイなど他ページに触れられず、fetch / WebSocket も使えません。外部スクリプトは cdnjs / jsDelivr / unpkg、フォントは Google Fonts だけ読み込めます。
 
 > [!WARNING]
 > APIトークン類は絶対にGitにコミットしないでください。環境変数はRailwayダッシュボードで管理します。
